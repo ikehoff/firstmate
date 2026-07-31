@@ -153,6 +153,10 @@ exit 0
 SH
   chmod +x "$fakebin/tmux"
   fm_fake_exit0 "$fakebin" treehouse
+  # fm-spawn refuses a verified harness whose executable is absent, so the
+  # fixture supplies every runtime name instead of depending on the
+  # developer's install set.
+  fm_fake_harness_bins "$fakebin"
   printf '%s\n' "$fakebin"
 }
 

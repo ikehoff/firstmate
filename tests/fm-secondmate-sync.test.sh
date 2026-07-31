@@ -292,6 +292,10 @@ make_fake_toolchain() {
   fakebin="$dir/fakebin"
   mkdir -p "$fakebin"
   fm_fake_exit0 "$fakebin" node gh-axi chrome-devtools-axi lavish-axi
+  # fm-spawn refuses a verified harness whose executable is absent, so the
+  # fixture supplies every runtime name instead of depending on the
+  # developer's install set.
+  fm_fake_harness_bins "$fakebin"
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 if [ -n "${FM_FAKE_TMUX_LOG:-}" ]; then
@@ -313,6 +317,9 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
+  # fm-spawn refuses a verified harness whose executable is absent, so the fixture
+  # supplies every runtime name instead of depending on the developer's install set.
+  fm_fake_harness_bins "$fakebin"
   cat > "$fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -715,6 +722,9 @@ test_spawn_fast_forwards_before_launch() {
 exit 0
 SH
   chmod +x "$fakebin/tmux"
+  # fm-spawn refuses a verified harness whose executable is absent, so the fixture
+  # supplies every runtime name instead of depending on the developer's install set.
+  fm_fake_harness_bins "$fakebin"
 
   PATH="$fakebin:$BASE_PATH" TMUX='' \
     FM_ROOT_OVERRIDE="$w/main" FM_HOME="$w/home" \
@@ -749,6 +759,9 @@ test_spawn_warns_when_sync_skipped_before_launch() {
 exit 0
 SH
   chmod +x "$fakebin/tmux"
+  # fm-spawn refuses a verified harness whose executable is absent, so the fixture
+  # supplies every runtime name instead of depending on the developer's install set.
+  fm_fake_harness_bins "$fakebin"
 
   PATH="$fakebin:$BASE_PATH" TMUX='' \
     FM_ROOT_OVERRIDE="$w/main" FM_HOME="$w/home" \

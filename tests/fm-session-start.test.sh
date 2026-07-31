@@ -60,6 +60,9 @@ new_world() {
 make_fake_toolchain() {
   local fakebin=$1
   fm_fake_exit0 "$fakebin" tmux node gh-axi chrome-devtools-axi lavish-axi
+  # fm-spawn refuses a verified harness whose executable is absent, so the fixture
+  # supplies every runtime name instead of depending on the developer's install set.
+  fm_fake_harness_bins "$fakebin"
   cat > "$fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 exit 0

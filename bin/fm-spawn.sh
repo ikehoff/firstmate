@@ -71,8 +71,14 @@
 #   /updatefirstmate, restart). A bare adapter name (claude|codex|opencode|pi|pi-signed|grok|kimi)
 #   overrides it for this spawn (either kind). A non-flag string containing
 #   whitespace is treated as a RAW launch command - the escape hatch for verifying
-#   new adapters. pi-signed launches that exact executable name from PATH and
-#   refuses before endpoint creation when it is unavailable; it never falls back to pi.
+#   new adapters. Every verified harness must have its executable on PATH: the
+#   spawn resolves it and refuses with a named error before any endpoint,
+#   worktree, or metadata is created, so an uninstalled-but-verified harness is a
+#   named spawn failure instead of a task whose endpoint is alive but has no agent
+#   in it. kimi resolves PATH plus its documented install fallback. A raw launch
+#   command is exempt because its first word need not be a bare PATH command name,
+#   except for pi-signed, whose exact-executable identity check applies to every
+#   spawn that names it so it can never fall back to pi.
 #   config/secondmate-harness may also carry an optional model and effort as extra
 #   whitespace-separated tokens ("<harness> [<model>] [<effort>]"). For a
 #   --secondmate spawn, those tokens apply only when this spawn also resolves its
@@ -491,10 +497,16 @@ launch_template() {
   esac
 }
 
+# TEMPLATED_HARNESS records whether $HARNESS came from a verified launch
+# template, whose first word is always a bare PATH-resolved command name. A raw
+# launch command may name an absolute path, a shell function, or an alias, so its
+# derived $HARNESS is only a label and must never drive a PATH lookup.
+TEMPLATED_HARNESS=1
 case "$ARG3" in
   *' '*)  # raw launch command (unverified-adapter escape hatch)
     LAUNCH=$ARG3
     HARNESS=""
+    TEMPLATED_HARNESS=0
     for word in $LAUNCH; do
       case "$word" in [A-Za-z_]*=*) continue ;; *) HARNESS=$(basename "$word"); break ;; esac
     done
@@ -531,13 +543,36 @@ case "$HARNESS" in
   pi|pi-signed) LAUNCH="FM_PI_HARNESS=$HARNESS $LAUNCH" ;;
 esac
 
-# pi-signed is an explicitly selected executable identity, not an alias that may
-# silently fall back to pi. Resolve it from PATH before creating an endpoint and
-# retain the literal name in the launch command and task metadata.
-if [ "$HARNESS" = pi-signed ] && ! command -v pi-signed >/dev/null 2>&1; then
-  echo "error: pi-signed executable not found on PATH; install the signed Pi wrapper or select a different verified harness" >&2
-  exit 1
-fi
+# A verified harness can be selected while its executable is not installed - the
+# adapter list is a knowledge set, not an inventory of this machine. Without this
+# check the spawn still succeeds into a PHANTOM task: the endpoint is created,
+# state/<id>.meta is written, and the backend reports the endpoint alive because
+# the shell survives the failed launch command, while no agent ever started and
+# no status line will ever appear. Refuse here, before any endpoint, worktree, or
+# task metadata exists, so a missing runtime is a named spawn failure the caller
+# can act on rather than a silently dead task.
+#
+# kimi is absent from this list on purpose: it resolves its own binary below from
+# PATH plus a documented install fallback, and refuses with its own named error.
+case "$HARNESS" in
+  pi-signed)
+    # pi-signed is an explicitly selected executable identity, not an alias that
+    # may silently fall back to pi. Resolve it from PATH before creating an
+    # endpoint and retain the literal name in the launch command and metadata.
+    # Deliberately not gated on TEMPLATED_HARNESS: the identity guarantee holds
+    # for every spawn that names pi-signed, including a raw launch command.
+    if ! command -v pi-signed >/dev/null 2>&1; then
+      echo "error: pi-signed executable not found on PATH; install the signed Pi wrapper or select a different verified harness" >&2
+      exit 1
+    fi
+    ;;
+  claude|codex|opencode|pi|grok)
+    if [ "$TEMPLATED_HARNESS" -eq 1 ] && ! command -v "$HARNESS" >/dev/null 2>&1; then
+      echo "error: $HARNESS executable not found on PATH; install the $HARNESS worker runtime or select a different verified harness" >&2
+      exit 1
+    fi
+    ;;
+esac
 
 # config/secondmate-harness may carry optional model/effort tokens alongside the
 # harness ("<harness> [<model>] [<effort>]"). They apply only when this is a

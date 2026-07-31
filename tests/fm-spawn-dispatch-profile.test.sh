@@ -25,7 +25,13 @@ esac
 case "${1:-}" in
   display-message) printf 'firstmate\n'; exit 0 ;;
   list-windows) exit 0 ;;
-  has-session|new-session|new-window|kill-window) exit 0 ;;
+  new-window)
+    # Endpoint creation. Logged so a test can prove a refusal happened before any
+    # window existed, not merely before metadata was written.
+    [ -z "${FM_FAKE_WINDOW_LOG:-}" ] || printf '%s\n' "$*" >> "$FM_FAKE_WINDOW_LOG"
+    exit 0
+    ;;
+  has-session|new-session|kill-window) exit 0 ;;
   send-keys)
     if [ -n "${FM_FAKE_LAUNCH_LOG:-}" ]; then
       prev=
@@ -42,7 +48,11 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
-  fm_fake_exit0 "$fakebin" treehouse pi-signed
+  fm_fake_exit0 "$fakebin" treehouse
+  # fm-spawn refuses a verified harness whose executable is absent, so every
+  # runtime a case may select is stubbed here rather than inherited from
+  # whichever runtimes happen to be installed on the developer's machine.
+  fm_fake_harness_bins "$fakebin"
   printf '%s\n' "$fakebin"
 }
 
@@ -547,6 +557,67 @@ test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata() {
   pass "pi-signed refuses safely and actionably when the selected executable is unavailable"
 }
 
+# Refusing an uninstalled-but-verified harness is what keeps an absent worker
+# runtime from producing a PHANTOM task: without it the spawn reports success,
+# metadata is published, and the backend reports the endpoint alive while the
+# failed launch command left nothing but a shell in the window.
+test_missing_verified_harness_refuses_before_endpoint_or_metadata() {
+  local rec id out status windowlog harness
+  for harness in codex grok; do
+    id="profile-missing-$harness-z8e"
+    rec=$(make_spawn_case "profile-missing-$harness" "$harness" "$id")
+    read_case_record "$rec"
+    rm -f "$FAKEBIN_DIR/$harness"
+    windowlog="$CASE_DIR/window.log"
+    : > "$LAUNCH_LOG"
+    : > "$windowlog"
+
+    out=$(FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
+      FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
+      FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
+      FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
+      FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" FM_FAKE_WINDOW_LOG="$windowlog" \
+      GROK_HOME="$HOME_DIR/grok-home" PATH="$FAKEBIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin" \
+      "$SPAWN" "$id" "$PROJ_DIR" 2>&1)
+    status=$?
+    expect_code 1 "$status" "an absent $harness executable should refuse the spawn"
+    assert_contains "$out" "$harness executable not found on PATH" \
+      "missing $harness refusal did not name the actionable requirement"
+    assert_absent "$HOME_DIR/state/$id.meta" "missing $harness refusal wrote task metadata"
+    [ ! -s "$windowlog" ] || fail "missing $harness refusal created an endpoint"
+    [ ! -s "$LAUNCH_LOG" ] || fail "missing $harness refusal typed a launch command"
+  done
+  pass "an uninstalled verified harness refuses before any endpoint or metadata exists"
+}
+
+# A raw launch command is the unverified-adapter escape hatch: its first word may
+# be an absolute path, so its derived harness label must never drive a PATH lookup
+# even when that label collides with a verified adapter name.
+test_raw_launch_command_is_exempt_from_the_harness_path_check() {
+  local rec id out status launch tooldir
+  id=profile-raw-offpath-z8f
+  rec=$(make_spawn_case profile-raw-offpath codex "$id")
+  read_case_record "$rec"
+  rm -f "$FAKEBIN_DIR/codex"
+  tooldir="$CASE_DIR/offpath"
+  mkdir -p "$tooldir"
+  fm_fake_exit0 "$tooldir" codex
+  : > "$LAUNCH_LOG"
+
+  out=$(FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
+    FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
+    FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
+    FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" PATH="$FAKEBIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin" \
+    "$SPAWN" "$id" "$PROJ_DIR" "$tooldir/codex --headless" 2>&1)
+  status=$?
+  expect_code 0 "$status" "a raw launch command naming an off-PATH executable should still spawn"
+  assert_contains "$out" "spawned $id harness=codex" "raw launch spawn did not record its harness label"
+  launch=$(cat "$LAUNCH_LOG")
+  assert_contains "$launch" "$tooldir/codex --headless" "raw launch command was not typed verbatim"
+  pass "a raw launch command spawns on an off-PATH executable whose name matches a verified adapter"
+}
+
 test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity() {
   local rec id sm out status launch
   id=profile-pi-signed-secondmate-z8d
@@ -675,6 +746,8 @@ test_opencode_threads_model_and_ignores_effort_axis
 test_pi_threads_model_and_max_effort
 test_pi_signed_threads_shared_pi_profile_and_preserves_identity
 test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata
+test_missing_verified_harness_refuses_before_endpoint_or_metadata
+test_raw_launch_command_is_exempt_from_the_harness_path_check
 test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity
 test_batch_forwards_shared_profile_flags
 test_claude_forwards_firstmate_config_dir_when_set

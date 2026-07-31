@@ -100,6 +100,19 @@ SH
   done
 }
 
+# fm_fake_harness_bins <fakebin> [harness...] installs exit-0 stubs for verified
+# worker-runtime executables, defaulting to every verified adapter. fm-spawn
+# resolves the selected harness from PATH and refuses before creating an endpoint
+# when it is absent, so a spawn test needs the NAME present even though its faked
+# backend never types the real launch command. Declaring the stub keeps the test
+# independent of which runtimes happen to be installed on the developer's machine.
+fm_fake_harness_bins() {
+  local fakebin=$1
+  shift
+  [ "$#" -gt 0 ] || set -- claude codex opencode pi pi-signed grok kimi
+  fm_fake_exit0 "$fakebin" "$@"
+}
+
 # --- deterministic git identity and fixtures --------------------------------
 
 # fm_git_identity [name] [email]: export a fixed author/committer identity so

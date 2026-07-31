@@ -34,6 +34,10 @@ The supervision knowledge lives here: busy signature, exit command, interrupt, d
 Never dispatch a crewmate or secondmate on an unverified adapter.
 If `config/crew-harness` or `config/secondmate-harness` names an unverified adapter, tell the captain under `AGENTS.md` section 9 that the requested worker runtime is not verified yet, use firstmate's own verified runtime for current work, and ask only whether to verify the requested runtime before future use.
 Do not pause current work for that future-verification choice, and never launch an unverified adapter.
+
+Verified is not the same as installed: the adapter list is knowledge, not an inventory of this machine.
+`bin/fm-spawn.sh` resolves the selected harness executable and refuses with `error: <harness> executable not found on PATH` before creating any endpoint, worktree, or task metadata, so that refusal means the runtime is missing here rather than unverified.
+Treat it as a blocker under `AGENTS.md` section 4: install that runtime or dispatch on a different verified runtime that is present, and never retry the same spawn expecting a different result.
 If the captain asks for a new harness, propose verifying it first: spawn a trivial supervised task using `fm-spawn`'s raw-launch-command escape hatch, confirm every fact empirically, then record the mechanics in `fm-spawn`, the busy signature in `fm-watch.sh` and `fm-tmux-lib.sh` defaults, any needed `FM_COMPOSER_IDLE_RE` empty-composer override plus any novel bare agent prompt glyph in `bin/fm-composer-lib.sh`'s shared composer classifier (the one fleet-wide owner of the empty/dead-shell/pending decision, so a new harness's own idle composer is not misread as a dead shell), the tmux agent-process liveness classification in `bin/backends/tmux.sh` when the harness can launch a secondmate, and the verified knowledge here.
 
 ## Detection

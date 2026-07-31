@@ -16,6 +16,14 @@ SPAWN="$ROOT/bin/fm-spawn.sh"
 TMP_ROOT=$(fm_test_tmproot fm-spawn-batch)
 export FM_BACKEND=tmux
 
+# fm-spawn resolves the selected harness from PATH and refuses when it is absent,
+# which would otherwise mask the argument-routing errors these tests assert. Stub
+# every verified runtime so routing is exercised regardless of what this machine
+# has installed.
+fm_fake_harness_bins "$(fm_fakebin "$TMP_ROOT/harness-fake")"
+PATH="$TMP_ROOT/harness-fake/fakebin:$PATH"
+export PATH
+
 # Clear ambient firstmate overrides so the behavior test owns its environment.
 run_spawn() {
   FM_ROOT_OVERRIDE='' \

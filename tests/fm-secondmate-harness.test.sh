@@ -397,6 +397,9 @@ make_noop_tmux() {
 exit 0
 SH
   chmod +x "$fakebin/tmux"
+  # fm-spawn refuses a verified harness whose executable is absent, so the fixture
+  # supplies every runtime name instead of depending on the developer's install set.
+  fm_fake_harness_bins "$fakebin"
   printf '%s\n' "$fakebin"
 }
 
@@ -596,6 +599,9 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
+  # fm-spawn refuses a verified harness whose executable is absent, so the fixture
+  # supplies every runtime name instead of depending on the developer's install set.
+  fm_fake_harness_bins "$fakebin"
   printf '%s\n' "$fakebin"
 }
 
@@ -922,6 +928,10 @@ make_fake_toolchain() {
   fakebin="$dir/fakebin"
   mkdir -p "$fakebin"
   fm_fake_exit0 "$fakebin" node gh-axi chrome-devtools-axi lavish-axi
+  # fm-spawn refuses a verified harness whose executable is absent, so the
+  # fixture supplies every runtime name instead of depending on the
+  # developer's install set.
+  fm_fake_harness_bins "$fakebin"
   # tmux fake supports fm-send's composer-verified submit path and optional
   # FM_FAKE_TMUX_LOG / FM_FAKE_TMUX_FAIL_LITERAL for reread-nudge assertions.
   cat > "$fakebin/tmux" <<'SH'
@@ -946,6 +956,9 @@ esac
 exit 0
 SH
   chmod +x "$fakebin/tmux"
+  # fm-spawn refuses a verified harness whose executable is absent, so the fixture
+  # supplies every runtime name instead of depending on the developer's install set.
+  fm_fake_harness_bins "$fakebin"
   cat > "$fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 exit 0
@@ -1900,6 +1913,9 @@ esac
 exec "$fakebin/tmux.real" "\$@"
 SH
   chmod +x "$fakebin/tmux"
+  # fm-spawn refuses a verified harness whose executable is absent, so the fixture
+  # supplies every runtime name instead of depending on the developer's install set.
+  fm_fake_harness_bins "$fakebin"
 
   first_out="$w/first-push.out"
   (
@@ -1997,6 +2013,9 @@ esac
 exec "$fakebin/tmux.real" "\$@"
 SH
   chmod +x "$fakebin/tmux"
+  # fm-spawn refuses a verified harness whose executable is absent, so the fixture
+  # supplies every runtime name instead of depending on the developer's install set.
+  fm_fake_harness_bins "$fakebin"
   report="$w/empty-reread.report"
   : > "$report"
   out=$(PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
@@ -2042,6 +2061,9 @@ esac
 exec "$fakebin/tmux.real" "\$@"
 SH
   chmod +x "$fakebin/tmux"
+  # fm-spawn refuses a verified harness whose executable is absent, so the fixture
+  # supplies every runtime name instead of depending on the developer's install set.
+  fm_fake_harness_bins "$fakebin"
   report="$w/empty-reread.report"
   : > "$report"
   log="$w/config-reread-order.tmux.log"
@@ -2222,6 +2244,9 @@ case "\$*" in
 esac
 SH
   chmod +x "$fakebin/tmux"
+  # fm-spawn refuses a verified harness whose executable is absent, so the fixture
+  # supplies every runtime name instead of depending on the developer's install set.
+  fm_fake_harness_bins "$fakebin"
   PATH="$fakebin:$BASE_PATH" FM_HOME="$w/home" FM_ROOT_OVERRIDE="$w/main" \
     FM_SEND_SETTLE=0 FM_FAKE_TMUX_LOG="$log" \
     "$ROOT/bin/fm-bootstrap.sh" >/dev/null 2>&1
