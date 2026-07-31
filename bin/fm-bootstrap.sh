@@ -8,6 +8,7 @@
 #          Lines: "MISSING: <tool> (install: <command>)",
 #                 "MISSING_MANUAL: <tool> (instructions: <url>)", "NEEDS_GH_AUTH",
 #                 "BACKEND_INVALID: <name> (known: <names>)",
+#                 "HARNESS_MISSING: <harness> (role: crewmate|secondmate; <remediation>)",
 #                 "STARTUP_MEMORY_BUDGET: invalid config/startup-memory-budget - <reason>",
 #                 "CREW_DISPATCH: invalid config/crew-dispatch.json - <reason>",
 #                 "FLEET_SYNC: <repo>: skipped|recovered|STUCK: <detail>",
@@ -45,6 +46,13 @@
 #          A TANGLE line means the firstmate primary checkout (FM_ROOT) is stranded
 #          on a feature branch instead of its default branch - a crewmate's work
 #          landed in the primary instead of its own worktree; restore it per the line.
+#          A HARNESS_MISSING line means the resolved crewmate or secondmate worker
+#          runtime is a VERIFIED adapter whose executable is not installed here, so
+#          fm-spawn.sh would refuse every dispatch on it. Both roles resolve
+#          independently and are reported once each; identical resolutions collapse
+#          to one line. Resolution is delegated to bin/fm-harness.sh executable-path
+#          so this inventory and the spawn preflight cannot drift. A name that is
+#          not a verified adapter is not reported here.
 #          treehouse is also MISSING when its installed version lacks
 #          "treehouse get --lease" support.
 #          no-mistakes is also MISSING when its installed version is older than
@@ -716,6 +724,46 @@ EOF
   echo "FMX: X mode on - relay poll armed via state/x-watch.check.sh; 30s watcher cadence in config/x-mode.env"
 }
 
+# harness_runtime_check: report a resolved worker runtime whose executable is not
+# installed on this machine (audit fm-install-audit-a1 finding G1).
+#
+# A verified adapter is a knowledge set, not an inventory of this machine, so a
+# home can resolve a harness that cannot start. bin/fm-spawn.sh refuses such a
+# spawn with a named error, but without this check the home only finds out at its
+# first dispatch: session start reports a clean bill of health for a home that
+# cannot launch a single worker. Front-load it here instead.
+#
+# Both roles are checked because they resolve independently: the crewmate harness
+# comes from config/crew-harness (or firstmate's own runtime), while the harness
+# the primary uses to launch secondmates comes from config/secondmate-harness with
+# its own fallback chain. They usually resolve to the same name, which is reported
+# once.
+#
+# Executable resolution is delegated to bin/fm-harness.sh, the one owner, so this
+# inventory and the spawn preflight cannot disagree. A name that is not a verified
+# adapter (exit 2) is deliberately NOT reported here: `command -v` on it would be
+# meaningless, and the harness fallback rule (AGENTS.md section 4) plus
+# crew_dispatch_validate already own unverified adapter names.
+harness_runtime_check() {
+  local role label config_file harness status seen=
+  for role in crew secondmate; do
+    harness=$(FM_HOME="$FM_HOME" FM_CONFIG_OVERRIDE="$CONFIG" \
+      "$SCRIPT_DIR/fm-harness.sh" "$role" 2>/dev/null || true)
+    [ -n "$harness" ] || continue
+    case " $seen " in *" $harness "*) continue ;; esac
+    seen="$seen $harness"
+    status=0
+    "$SCRIPT_DIR/fm-harness.sh" executable-path "$harness" >/dev/null 2>&1 || status=$?
+    [ "$status" -eq 1 ] || continue
+    if [ "$role" = crew ]; then
+      label=crewmate; config_file=config/crew-harness
+    else
+      label=secondmate; config_file=config/secondmate-harness
+    fi
+    echo "HARNESS_MISSING: $harness (role: $label; install the $harness worker runtime or set $config_file to a verified harness that is installed)"
+  done
+}
+
 crew_dispatch_validate() {
   local file err
   file="$CONFIG/crew-dispatch.json"
@@ -892,6 +940,7 @@ if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] && [ -n "$crew" ] && [ "$crew" != 
   echo "BOOTSTRAP_INFO: crew harness override active: $crew"
 fi
 crew_dispatch_validate
+harness_runtime_check
 if [ "${FM_BOOTSTRAP_VERBOSE_FACTS:-0}" = 1 ] \
   && ! fm_backlog_backend_manual "$CONFIG" && fm_tasks_axi_compatible; then
   echo "BOOTSTRAP_INFO: tasks-axi available"

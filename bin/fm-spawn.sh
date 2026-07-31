@@ -554,6 +554,16 @@ esac
 #
 # kimi is absent from this list on purpose: it resolves its own binary below from
 # PATH plus a documented install fallback, and refuses with its own named error.
+#
+# WHERE the executable lives is answered by `fm-harness.sh executable-path`, the
+# one fleet owner of that question, so this preflight and the session-start
+# inventory (bin/fm-bootstrap.sh) cannot drift into disagreeing about whether a
+# home can launch a worker. WHETHER a missing runtime refuses stays spawn policy
+# and stays here: only pi-signed refuses for a raw launch command too.
+harness_executable_present() {  # <harness>
+  "$SCRIPT_DIR/fm-harness.sh" executable-path "$1" >/dev/null 2>&1
+}
+
 case "$HARNESS" in
   pi-signed)
     # pi-signed is an explicitly selected executable identity, not an alias that
@@ -561,13 +571,13 @@ case "$HARNESS" in
     # endpoint and retain the literal name in the launch command and metadata.
     # Deliberately not gated on TEMPLATED_HARNESS: the identity guarantee holds
     # for every spawn that names pi-signed, including a raw launch command.
-    if ! command -v pi-signed >/dev/null 2>&1; then
+    if ! harness_executable_present pi-signed; then
       echo "error: pi-signed executable not found on PATH; install the signed Pi wrapper or select a different verified harness" >&2
       exit 1
     fi
     ;;
   claude|codex|opencode|pi|grok)
-    if [ "$TEMPLATED_HARNESS" -eq 1 ] && ! command -v "$HARNESS" >/dev/null 2>&1; then
+    if [ "$TEMPLATED_HARNESS" -eq 1 ] && ! harness_executable_present "$HARNESS"; then
       echo "error: $HARNESS executable not found on PATH; install the $HARNESS worker runtime or select a different verified harness" >&2
       exit 1
     fi
@@ -617,27 +627,16 @@ shell_quote() {
   printf "'"
 }
 
+# PATH plus the documented $HOME/.kimi-code/bin/kimi fallback, absolutized, is
+# resolved by `fm-harness.sh executable-path` (the one owner). Only the named
+# refusal is kimi's own, because the launch template embeds the resolved path.
 resolve_kimi_binary() {
-  local candidate dir fallback
-  candidate=$(command -v kimi 2>/dev/null || true)
-  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
-    case "$candidate" in
-      /*) printf '%s\n' "$candidate"; return 0 ;;
-      *)
-        dir=$(cd "$(dirname "$candidate")" 2>/dev/null && pwd -P) || dir=
-        if [ -n "$dir" ]; then
-          printf '%s/%s\n' "$dir" "$(basename "$candidate")"
-          return 0
-        fi
-        ;;
-    esac
-  fi
-  fallback="${HOME:-}/.kimi-code/bin/kimi"
-  if [ -n "${HOME:-}" ] && [ -x "$fallback" ]; then
-    printf '%s\n' "$fallback"
+  local resolved
+  if resolved=$("$SCRIPT_DIR/fm-harness.sh" executable-path kimi 2>/dev/null); then
+    printf '%s\n' "$resolved"
     return 0
   fi
-  echo "error: kimi executable not found; searched PATH for 'kimi' and fallback '$fallback'" >&2
+  echo "error: kimi executable not found; searched PATH for 'kimi' and fallback '${HOME:-}/.kimi-code/bin/kimi'" >&2
   return 1
 }
 

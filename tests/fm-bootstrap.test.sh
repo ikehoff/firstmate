@@ -39,6 +39,12 @@ make_fake_toolchain() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
   fm_fake_exit0 "$fakebin" tmux node gh-axi chrome-devtools-axi lavish-axi
+  # Bootstrap now reports a resolved worker runtime whose executable is absent, and
+  # the resolution of an unconfigured home follows firstmate's OWN harness - which
+  # depends on whichever agent runs the suite. Stub every verified adapter so the
+  # "all good, stay silent" cases stay hermetic on any developer's machine; the
+  # cases that assert HARNESS_MISSING remove the one stub they are about.
+  fm_fake_harness_bins "$fakebin"
   cat > "$fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 if [ "${1:-}" = auth ] && [ "${2:-}" = status ]; then
@@ -481,6 +487,123 @@ test_unknown_backend_reports_invalid_configuration() {
   pass "bootstrap: unknown resolved backends fail closed with an actionable diagnostic"
 }
 
+# --- resolved worker runtime is actually installed (audit finding G1) --------
+# A verified adapter is a knowledge set, not an inventory of this machine, so a
+# home can resolve a harness that cannot start. fm-spawn.sh refuses such a spawn,
+# but without this check session start reported a clean bill of health for a home
+# that could not launch a single worker.
+
+# make_harness_case: a home whose crew (and optionally secondmate) harness is
+# pinned, on a full fake toolchain with the named harness stubs REMOVED so they
+# resolve as absent regardless of what the developer has installed. Prints the
+# fake bin dir.
+make_harness_case() {  # <case-dir> <crew> [secondmate] [absent-harness...]
+  local case_dir=$1 crew=$2 secondmate=$3 fakebin absent
+  shift 3
+  mkdir -p "$case_dir/home/config"
+  printf '%s\n' manual > "$case_dir/home/config/backlog-backend"
+  printf '%s\n' tmux > "$case_dir/home/config/backend"
+  printf '%s\n' "$crew" > "$case_dir/home/config/crew-harness"
+  [ -z "$secondmate" ] || printf '%s\n' "$secondmate" > "$case_dir/home/config/secondmate-harness"
+  fakebin=$(make_fake_toolchain "$case_dir")
+  for absent in "$@"; do rm -f "$fakebin/$absent"; done
+  printf '%s\n' "$fakebin"
+}
+
+run_harness_case() {  # <case-dir> <fakebin>
+  PATH="$2:$BASE_PATH" FM_HOME="$1/home" FM_ROOT_OVERRIDE="$1/home" \
+    FM_FAKE_TREEHOUSE_LEASE_HELP=1 "$ROOT/bin/fm-bootstrap.sh"
+}
+
+test_absent_crew_harness_runtime_is_reported() {
+  local case_dir fakebin out
+  case_dir="$TMP_ROOT/harness-crew-absent"
+  fakebin=$(make_harness_case "$case_dir" codex '' codex)
+  out=$(run_harness_case "$case_dir" "$fakebin")
+  assert_contains "$out" \
+    "HARNESS_MISSING: codex (role: crewmate; install the codex worker runtime or set config/crew-harness to a verified harness that is installed)" \
+    "bootstrap should report a configured crewmate runtime that is not installed"
+  assert_not_contains "$out" "MISSING: codex (install:" \
+    "an absent worker runtime must not pose as an installable bootstrap tool"
+
+  # Same home, runtime present: the check must add no noise.
+  case_dir="$TMP_ROOT/harness-crew-present"
+  fakebin=$(make_harness_case "$case_dir" codex '')
+  out=$(run_harness_case "$case_dir" "$fakebin")
+  [ -z "$out" ] || fail "an installed crewmate runtime should keep bootstrap silent, got: $out"
+  pass "bootstrap: a configured crewmate worker runtime that is not installed is reported at session start"
+}
+
+test_harness_roles_resolve_independently_and_collapse() {
+  local case_dir fakebin out count
+  # Crew and secondmate harnesses resolve through separate chains, so an absent
+  # runtime on either role is its own actionable line.
+  case_dir="$TMP_ROOT/harness-both-absent"
+  fakebin=$(make_harness_case "$case_dir" codex grok codex grok)
+  out=$(run_harness_case "$case_dir" "$fakebin")
+  assert_contains "$out" "HARNESS_MISSING: codex (role: crewmate;" \
+    "an absent crewmate runtime should be reported when the secondmate harness differs"
+  assert_contains "$out" "HARNESS_MISSING: grok (role: secondmate; install the grok worker runtime or set config/secondmate-harness to a verified harness that is installed)" \
+    "an absent secondmate runtime should name its own config file"
+
+  # secondmate-harness absent falls back to the crew harness, so the same missing
+  # runtime must be reported once, not twice.
+  case_dir="$TMP_ROOT/harness-shared-absent"
+  fakebin=$(make_harness_case "$case_dir" codex '' codex)
+  out=$(run_harness_case "$case_dir" "$fakebin")
+  count=$(printf '%s\n' "$out" | grep -c 'HARNESS_MISSING:' || true)
+  [ "$count" -eq 1 ] || fail "one missing runtime shared by both roles should report once, got $count lines: $out"
+  pass "bootstrap: crewmate and secondmate runtimes are checked independently and an identical resolution reports once"
+}
+
+test_unverified_harness_name_is_not_reported_as_missing() {
+  local case_dir fakebin out
+  # `command -v` on a name that is not a verified adapter is meaningless. The
+  # harness fallback rule and crew-dispatch validation own unverified names, so
+  # this check must stay silent rather than invent a missing-runtime claim.
+  case_dir="$TMP_ROOT/harness-unverified"
+  fakebin=$(make_harness_case "$case_dir" bogus-harness '')
+  out=$(run_harness_case "$case_dir" "$fakebin")
+  assert_not_contains "$out" "HARNESS_MISSING" \
+    "an unverified adapter name must not be reported as a missing runtime"
+  pass "bootstrap: an unverified harness name is not misreported as an uninstalled runtime"
+}
+
+test_harness_executable_path_is_the_shared_resolver() {
+  local case_dir fakebin status out fakehome
+  # bin/fm-harness.sh executable-path is the ONE owner both bootstrap and the
+  # fm-spawn preflight ask, so its three outcomes are pinned here: installed
+  # (absolute path, exit 0), verified but absent (exit 1), unverified (exit 2).
+  case_dir="$TMP_ROOT/harness-executable-path"
+  mkdir -p "$case_dir"
+  fakebin=$(fm_fakebin "$case_dir")
+  fm_fake_harness_bins "$fakebin" claude
+  out=$(PATH="$fakebin:$BASE_PATH" "$ROOT/bin/fm-harness.sh" executable-path claude)
+  [ "$out" = "$fakebin/claude" ] \
+    || fail "executable-path should print the absolute resolved runtime, got '$out'"
+
+  status=0
+  out=$(PATH="$fakebin:$BASE_PATH" "$ROOT/bin/fm-harness.sh" executable-path codex 2>&1) || status=$?
+  [ "$status" -eq 1 ] || fail "a verified but uninstalled harness should exit 1, got $status"
+  [ -z "$out" ] || fail "a missing runtime should be reported by exit code only, got '$out'"
+
+  status=0
+  out=$(PATH="$fakebin:$BASE_PATH" "$ROOT/bin/fm-harness.sh" executable-path bogus-harness 2>&1) || status=$?
+  [ "$status" -eq 2 ] || fail "an unverified adapter name should exit 2, got $status"
+  [ -z "$out" ] || fail "an unverified adapter name should be reported by exit code only, got '$out'"
+
+  # kimi additionally accepts its documented install fallback, which its installer
+  # does not always put on PATH; fm-spawn embeds this exact path in its launch.
+  fakehome="$case_dir/kimi-home"
+  mkdir -p "$fakehome/.kimi-code/bin"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$fakehome/.kimi-code/bin/kimi"
+  chmod +x "$fakehome/.kimi-code/bin/kimi"
+  out=$(PATH="$fakebin:$BASE_PATH" HOME="$fakehome" "$ROOT/bin/fm-harness.sh" executable-path kimi)
+  [ "$out" = "$fakehome/.kimi-code/bin/kimi" ] \
+    || fail "kimi should resolve through its documented install fallback, got '$out'"
+  pass "fm-harness.sh executable-path: one resolver answers installed, verified-but-absent, and unverified"
+}
+
 test_json_backends_require_jq_not_tmux() {
   local backend case_dir fakebin bash_env out
   # herdr/zellij/cmux parse their backend's JSON output, so jq is a genuine dep.
@@ -800,6 +923,10 @@ test_session_provider_backends_gate_own_cli_not_tmux
 test_herdr_install_requires_manual_action
 test_cmux_bundled_cli_satisfies_dependency
 test_unknown_backend_reports_invalid_configuration
+test_absent_crew_harness_runtime_is_reported
+test_harness_roles_resolve_independently_and_collapse
+test_unverified_harness_name_is_not_reported_as_missing
+test_harness_executable_path_is_the_shared_resolver
 test_json_backends_require_jq_not_tmux
 test_treehouse_lease_check_follows_resolved_backend
 test_fleet_sync_timeout_scales_with_origin_backed_project_count

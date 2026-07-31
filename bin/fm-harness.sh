@@ -13,6 +13,11 @@
 #                                        config/secondmate-harness, or empty when absent.
 #        fm-harness.sh secondmate-effort   print the optional EFFORT token from
 #                                        config/secondmate-harness, or empty when absent.
+#        fm-harness.sh executable-path <harness>
+#                                        print the absolute worker-runtime executable for a
+#                                        verified harness (exit 0). Exit 1 silently when the
+#                                        harness is verified but not installed, exit 2 silently
+#                                        when the name is not a verified adapter.
 # config/secondmate-harness format: a single line "<harness> [<model>] [<effort>]",
 # whitespace-separated. A bare "<harness>" (today's format) behaves exactly as before:
 # harness only, no model/effort. Only the first non-empty, non-comment line is parsed.
@@ -147,10 +152,60 @@ resolve_secondmate_effort() {
   secondmate_field 3
 }
 
+# --- verified worker-runtime executable resolution ---------------------------
+# A verified adapter is knowledge, not an inventory of this machine, so a home can
+# resolve a harness whose runtime is not installed at all. Two places need that
+# answer - the session-start inventory (bin/fm-bootstrap.sh) and the spawn
+# preflight (bin/fm-spawn.sh) - and they must ask it the same way or they will
+# disagree about whether the home can launch a worker. This is the one owner.
+#
+# pi-signed resolves as its own literal executable and never as pi, because
+# selecting it is an executable-identity choice (.agents/skills/harness-adapters).
+# kimi additionally accepts its documented install fallback
+# $HOME/.kimi-code/bin/kimi, which its installer does not always put on PATH.
+
+# harness_absolute_path: normalize a resolved command to an absolute path, so a
+# launch command that survives a directory change still names the same binary.
+harness_absolute_path() {  # <command-path>
+  local candidate=$1 dir
+  case "$candidate" in
+    /*) printf '%s\n' "$candidate"; return 0 ;;
+  esac
+  dir=$(cd "$(dirname "$candidate")" 2>/dev/null && pwd -P) || return 1
+  [ -n "$dir" ] || return 1
+  printf '%s/%s\n' "$dir" "$(basename "$candidate")"
+}
+
+# resolve_executable_path: print the absolute executable for <harness> and exit 0
+# when it is installed. Exit 1 (silently) when the harness is verified but its
+# runtime is absent, and exit 2 (silently) when the name is not a verified
+# adapter, so callers can tell a missing runtime apart from an unverified adapter
+# without parsing text.
+resolve_executable_path() {  # <harness>
+  local harness=$1 candidate fallback
+  case "$harness" in
+    claude|codex|opencode|pi|pi-signed|grok|kimi) ;;
+    *) return 2 ;;
+  esac
+  candidate=$(command -v "$harness" 2>/dev/null || true)
+  if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+    harness_absolute_path "$candidate" && return 0
+  fi
+  if [ "$harness" = kimi ]; then
+    fallback="${HOME:-}/.kimi-code/bin/kimi"
+    if [ -n "${HOME:-}" ] && [ -x "$fallback" ]; then
+      printf '%s\n' "$fallback"
+      return 0
+    fi
+  fi
+  return 1
+}
+
 case "${1:-}" in
   crew) resolve_crew ;;
   secondmate) resolve_secondmate ;;
   secondmate-model) resolve_secondmate_model ;;
   secondmate-effort) resolve_secondmate_effort ;;
+  executable-path) resolve_executable_path "${2:-}"; exit $? ;;
   *) detect_own ;;
 esac
