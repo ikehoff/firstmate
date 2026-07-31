@@ -34,6 +34,7 @@ Only a branch's newest run is eligible: once a fresh run supersedes an earlier o
 The script header owns the exact run-head ancestry and supersession rules.
 A failure carries its cause alongside the state, because `failed` on its own does not say whether the run ever judged the code: a validation service that restarted mid-run, or a push the forge rejected, terminates a run exactly as a real gate verdict does while calling for the opposite response - a fresh run or a credential fix rather than treating the work as rejected.
 The cause is read only from a run object attributed to this crew's own branch, so the coarse cross-branch fallback reports a bare failure rather than borrowing the cause of whichever run the repo-wide query happened to return.
+What an agent then does with that cause - reading custody before declaring gate work lost, and superseding the dead run rather than resuming or aborting it - is owned by the `stuck-crewmate-recovery` skill.
 During no-mistakes' `ci` monitor phase, it also reads the ci step log tail because `axi status` reports both "still waiting on checks" and "checks green, waiting on merge" as `ci,running`.
 The most recent recognized ci log marker wins, so checks-green monitoring reports done while a later re-arm, failed-check, or issue marker returns the crew to working.
 Only when no matching run exists does it fall back to the pane busy-signature and then a status-log event whose verb maps to a recognized run-state; a dead pane without a run reports unknown instead of trusting a stale log.

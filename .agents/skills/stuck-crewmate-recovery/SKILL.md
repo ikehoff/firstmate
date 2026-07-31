@@ -2,7 +2,7 @@
 name: stuck-crewmate-recovery
 description: >-
   Agent-only playbook for stuck or missing ordinary Firstmate direct reports.
-  Use when the session-start digest reports an ordinary direct report's endpoint dead or its metadata has no window, or after a stale wake, looping pane, repeated confusion, an answered-by-brief question, an unresponsive crewmate, or a failed steer.
+  Use when the session-start digest reports an ordinary direct report's endpoint dead or its metadata has no window, after a stale wake, looping pane, repeated confusion, an answered-by-brief question, an unresponsive crewmate, or a failed steer, or when a validation run ends with an infrastructure cause instead of a verdict on the code.
   Reconciles recorded work before escalating from targeted inspection through safe relaunch or failure.
 user-invocable: false
 metadata:
@@ -34,6 +34,25 @@ Preserve its uncommitted changes and commits, keep the same task identity, and r
 Do not use a fresh generic spawn while the recorded worktree is unaccounted for, because allocating another worktree can split one task across two copies.
 If the worktree or ownership cannot be reconciled safely, leave all state intact and report the task failed or blocked with the conflicting evidence.
 
+## A validation run that ended without judging the code
+
+`bin/fm-crew-state.sh` appends a terminal validation failure's own cause to the state line.
+A cause naming the validation service restarting, a rejected push, a transport error, or an agent process exit means the run ended for infrastructure reasons and never reached a verdict on the code.
+That is a run to replace, not a task to report failed and not a crew to tear down.
+When the line carries no cause at all, read the run directly with `no-mistakes axi status` from the task's own copy before treating the failure as a verdict, because a coarse-resolved failure deliberately reports bare.
+
+Such a run is terminal: it cannot be resumed, and aborting it is not the recovery step, because only a fresh run supersedes it.
+Before saying any work was lost, read custody with `no-mistakes axi sync --check` from the task's own copy.
+Comparing the branch head to the pipeline remote proves nothing here, because the gate's fix commits can be preserved while the dead run's own head is unreachable locally.
+When that read offers custody recovery, `no-mistakes axi sync --recover` is the guarded way to bring back commits stranded by a terminal run.
+A read that recovers nothing is not evidence that work disappeared, so report its own state and note rather than concluding loss from it.
+
+Confirm the validation service is back before asking for a fresh run: `no-mistakes daemon status` answers in one line, and a service that is still down makes the fresh run fail the same way.
+The worker still owns every call in its own pipeline, so steer it instead of driving the run yourself.
+Tell it in one line that the previous run died from infrastructure rather than a finding, that the service is healthy again, and that it should start a fresh run whose intent covers the original scope plus any gate fixes already reapplied by hand.
+Naming the cause explicitly is what keeps the worker from stopping to wait on a verdict that will never arrive.
+The fresh run must build on the existing branch, never an abort-and-restart, reset, or replacement that drops earlier gate-fix commits.
+
 ## Live-endpoint escalation
 
 Escalate in order:
@@ -45,5 +64,6 @@ Escalate in order:
 4. If the crewmate is genuinely wedged after redirection, exit the agent with the adapter's exit command and relaunch with the same brief plus a `progress so far` note appended to it.
    Genuine wedging means looping, unresponsive, repeating the same obstacle, or truly dead.
    A low context reading is not wedging; modern harnesses auto-compact and keep going.
+   A quiet pane during a validation review or fix round is not wedging either, because the pipeline holds the work while the pane sits idle; judge it by the run step as `AGENTS.md` section 7 requires.
    The worktree and commits persist, so relaunch is cheap.
 5. If a second relaunch fails too, write `failed` to the backlog and tell the captain the plain failure, preserved work, and consequence using `AGENTS.md` section 9; do not mention metadata, harness, window, or worktree unless the path itself is needed for action.
