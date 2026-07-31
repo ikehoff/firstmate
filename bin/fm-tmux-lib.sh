@@ -122,11 +122,14 @@ fm_tmux_strip_ghost() { fm_composer_strip_ghost; }
 # and may recognize a busy footer.
 fm_tmux_composer_row_state() {  # <raw-row> [bordered] [allow-busy] -> empty|pending|unknown
   local raw=$1 bordered=${2:-0} allow_busy=${3:-1} plain stripped
-  # Trim through the shared fm_composer_trim_ws (bin/fm-composer-lib.sh) rather
-  # than a local ASCII-only idiom: claude pads its empty composer row with a
-  # U+00A0 no-break space, which no locale's [:space:] class matches, so a local
-  # trim would leave padding attached to the border or the prompt glyph.
-  plain=$(fm_composer_trim_ws "$(printf '%s\n' "$raw" | fm_composer_strip_ansi)")
+  # `plain` is handed to fm_composer_classify_content untouched, which trims it
+  # through the shared padding class itself (bin/fm-composer-lib.sh), so trimming
+  # it here would only repeat that work. `stripped` IS trimmed here, because the
+  # border strip and the busy check below both act on it before the classifier
+  # sees it - and through the shared trim rather than a local ASCII-only idiom,
+  # since claude pads its empty composer row with a U+00A0 no-break space that no
+  # locale's [:space:] class matches.
+  plain=$(printf '%s\n' "$raw" | fm_composer_strip_ansi)
   stripped=$(fm_composer_trim_ws "$(printf '%s\n' "$raw" | fm_composer_strip_ghost)")
   case "$stripped" in
     '│'*'│') stripped=${stripped#│}; stripped=${stripped%│} ;;
@@ -134,7 +137,10 @@ fm_tmux_composer_row_state() {  # <raw-row> [bordered] [allow-busy] -> empty|pen
     '║'*'║') stripped=${stripped#║}; stripped=${stripped%║} ;;
     '|'*'|') stripped=${stripped#|}; stripped=${stripped%|} ;;
   esac
-  stripped=$(fm_composer_trim_ws "$stripped")
+  # Fork-free: this runs once per composer row on every supervision poll, and the
+  # emptiness of the border-stripped row gates the busy check below.
+  fm_composer_trim_ws_var "$stripped"
+  stripped=$FM_COMPOSER_TRIMMED
   if [ "$allow_busy" = 1 ] && [ -n "$stripped" ] \
      && printf '%s' "$stripped" | grep -qiE "${FM_BUSY_REGEX:-$FM_TMUX_BUSY_REGEX_DEFAULT}"; then
     printf 'empty'; return 0

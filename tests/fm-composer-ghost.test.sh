@@ -435,6 +435,52 @@ test_unproved_empty_geometry_is_unknown() {
   pass "fm_tmux_composer_state: unproved ghost, idle, and border geometry stays unknown"
 }
 
+# U+00A0 composer padding (task fm-composer-nbsp), driven through the fake tmux so
+# the two independent layers are proven deterministically, without depending on a
+# real pane having finished drawing: the box-geometry blank-interior test in
+# fm_tmux_find_composer_box / fm_tmux_composer_geometry_spaces, which degrades a
+# padded-but-empty box to `unknown` if it reads the padding as content, and the
+# content classifier underneath it. tests/fm-backend-tmux-smoke.test.sh asserts the
+# same shapes against a REAL rendered pane; this one pins them with no timing at
+# all, and runs even where tmux is not installed.
+test_nbsp_padded_composer_reads_empty() {
+  local dir fb capture out fixture cy want
+  dir="$TMP_ROOT/nbsp-padding"; mkdir -p "$dir"
+  fb=$(make_fake_tmux "$dir")
+  capture="$dir/styled.txt"
+  # Every interior below measures 12 columns, matching the 12-column top and
+  # bottom borders, so a verdict of `unknown` can only come from the padding
+  # being misread as content rather than from a genuine geometry mismatch.
+  for fixture in bordered-glyph bordered-padding-only bordered-text bare-glyph; do
+    cy=1
+    want=empty
+    case "$fixture" in
+      bordered-glyph)
+        printf '╭────────────╮\n│ \xe2\x9d\xaf\xc2\xa0         │\n╰────────────╯\n' > "$capture"
+        ;;
+      bordered-padding-only)
+        printf '╭────────────╮\n│\xc2\xa0\xc2\xa0\xc2\xa0\xc2\xa0\xc2\xa0\xc2\xa0\xc2\xa0\xc2\xa0\xc2\xa0\xc2\xa0\xc2\xa0\xc2\xa0│\n╰────────────╯\n' > "$capture"
+        ;;
+      bordered-text)
+        # Typed text that CONTAINS a no-break space stays pending: the trim is
+        # leading/trailing only, never a content-stripping pass.
+        printf '╭────────────╮\n│ \xe2\x9d\xaf hi\xc2\xa0there │\n╰────────────╯\n' > "$capture"
+        want=pending
+        ;;
+      bare-glyph)
+        # The non-bordered fallback row, padded the same way.
+        printf '\033[39m\xe2\x9d\xaf\xc2\xa0\n' > "$capture"
+        cy=0
+        ;;
+    esac
+    out=$(PATH="$fb:$PATH" FM_FAKE_STYLED="$capture" FM_FAKE_CY="$cy" \
+      fm_tmux_composer_state "fakepane")
+    [ "$out" = "$want" ] \
+      || fail "U+00A0-padded composer '$fixture' should be $want, got '$out'"$'\n'"$(cat -A "$capture")"
+  done
+  pass "fm_tmux_composer_state: U+00A0 padding reads empty through both the box geometry and the content classifier"
+}
+
 test_differing_widths_use_asymmetric_verdicts() {
   local dir fb capture out
   dir="$TMP_ROOT/differing-widths"; mkdir -p "$dir"
@@ -617,6 +663,7 @@ test_asymmetric_composer_edges_are_unknown
 test_mismatched_box_families_are_unknown
 test_misaligned_box_is_unknown
 test_unproved_empty_geometry_is_unknown
+test_nbsp_padded_composer_reads_empty
 test_differing_widths_use_asymmetric_verdicts
 test_wide_composer_text_is_pending
 test_all_tmux_harness_composers_share_classification

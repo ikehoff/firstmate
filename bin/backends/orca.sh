@@ -288,9 +288,9 @@ fm_backend_orca_composer_state() {  # <terminal-id> -> empty|pending|unknown
   stripped=${stripped//│/}
   stripped=${stripped//┃/}
   stripped=${stripped//|/}
-  # Shared trim (bin/fm-composer-lib.sh): non-ASCII harness padding must not
-  # survive as false content.
-  stripped=$(fm_composer_trim_ws "$stripped")
+  # No trim here: fm_composer_classify_content (bin/fm-composer-lib.sh) trims its
+  # own input through the shared padding class, so non-ASCII harness padding
+  # cannot survive as false content wherever the caller left it.
   # A row was found only by the bordered shape above, so content came from a
   # genuine composer box - delegate to the shared owner with bordered=1. A bare
   # dead-shell prompt has no bordered row and already returned 'unknown' above.

@@ -2204,16 +2204,17 @@ EOF
   # afk-herdr-false-pending wedge) and, in a dark theme, drops the composer's own
   # dark box border too, which is why the bordered flag was read from the plain
   # shape above, not from this ghost-stripped content.
-  # Trimmed through the shared fm_composer_trim_ws, not a local ASCII-only
-  # idiom, so harness padding that no [:space:] class matches (claude's U+00A0
-  # empty-composer pad) cannot survive as false content.
-  stripped=$(fm_composer_trim_ws "$(printf '%s\n' "$raw_match" | fm_composer_strip_ghost)")
+  # The content is NOT trimmed here: the border removals below are global
+  # substitutions and so are order-independent, and fm_composer_classify_content
+  # (bin/fm-composer-lib.sh) trims its own input through the shared padding class,
+  # so harness padding that no [:space:] class matches (claude's U+00A0
+  # empty-composer pad) cannot survive as false content either way.
+  stripped=$(printf '%s\n' "$raw_match" | fm_composer_strip_ghost)
   if [ "$shape" = bordered ]; then
     bordered=1
     stripped=${stripped//│/}
     stripped=${stripped//┃/}
     stripped=${stripped//|/}
-    stripped=$(fm_composer_trim_ws "$stripped")
   elif [ "$shape" = separated ]; then
     # The native Pi identity plus the complete separator pair is the genuine
     # composer container, equivalent to a bordered box for shared content

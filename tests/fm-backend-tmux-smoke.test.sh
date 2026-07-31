@@ -161,38 +161,82 @@ COMPOSER_WINDOW="fm-smoke-composer"
 COMPOSER_TARGET="$SESSION:$COMPOSER_WINDOW"
 NBSP=$'\xc2\xa0'
 
-# composer_state_is <label> <row-bytes> <expected> - render <row-bytes> as the
-# only content of a fresh pane and hold the cursor on that row with a sleep, so
-# the reader sees a settled composer row exactly as it would on a live agent.
+# wait_for_composer_render <expected-cursor-y> <expected-bytes> - block until the
+# fixture pane has ACTUALLY drawn <expected-bytes> and parked its cursor on
+# <expected-cursor-y>. Leaves the last observed capture in RENDER_SEEN / the last
+# cursor row in RENDER_CY so a timeout can report what the pane really showed.
+#
+# Both halves are load-bearing. The byte check proves the whole fixture reached
+# the screen, trailing U+00A0 included (tmux's capture keeps it: it is not an
+# ASCII space, so the trailing-whitespace trim leaves it alone). The cursor check
+# proves the fixture's own cursor-positioning escape has been processed too - the
+# bordered fixtures end in `ESC[2A`, and a capture taken between the bottom
+# border and that escape would leave the cursor below the box, where the reader
+# finds no containing box at all.
+wait_for_composer_render() {  # <expected-cursor-y> <expected-bytes>
+  local want_cy=$1 want_text=$2 i=0
+  RENDER_SEEN=
+  RENDER_CY=
+  while [ "$i" -lt 100 ]; do
+    RENDER_CY=$(tmux display-message -p -t "$COMPOSER_TARGET" '#{cursor_y}' 2>/dev/null || true)
+    RENDER_SEEN=$(tmux capture-pane -p -t "$COMPOSER_TARGET" -S 0 -E - 2>/dev/null || true)
+    if [ "$RENDER_CY" = "$want_cy" ]; then
+      case "$RENDER_SEEN" in
+        *"$want_text"*) return 0 ;;
+      esac
+    fi
+    sleep 0.1
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# composer_state_is <label> <row-bytes> <cursor-y> <expected> - render <row-bytes>
+# as the only content of a fresh pane and hold the cursor on the composer row
+# with a sleep, so the reader sees a settled composer row exactly as it would on
+# a live agent.
+#
+# The verdict is read ONCE, and only after the pane is proven to have rendered
+# the fixture. It deliberately does NOT poll until the verdict happens to equal
+# the expectation: a pane that has not drawn yet has no box, no composer edge and
+# an empty cursor row, which classifies `empty` - so a poll-to-match loop passes
+# every `empty` assertion on iteration 0, before `cat` has written a byte. Those
+# are exactly the assertions that prove the U+00A0 padding fix (the content
+# classifier for the bare rows, the box-geometry blank-interior test for the
+# bordered one), and a test that cannot fail is the same mistake this task
+# exists to correct: the pre-existing suite passed the whole time the bug was
+# live. `pending` and `unknown` are never produced by a blank pane, so they were
+# never vacuous, and they keep the same meaning under the stricter gate.
+#
+# The expected bytes are derived from the fixture itself (its own bytes, minus
+# the CSI sequences a capture does not show) rather than hand-typed, so the
+# synchronization can never drift from what is being asserted.
 composer_state_is() {
-  local label=$1 row=$2 want=$3 got='' i=0
+  local label=$1 row=$2 want_cy=$3 want=$4 rendered got
+  rendered=$(printf '%s' "$row" | fm_composer_strip_ansi)
   printf '%s' "$row" > "$SHIM_DIR/composer-row.bin"
   tmux kill-window -t "$COMPOSER_TARGET" 2>/dev/null || true
   tmux new-window -d -t "$SESSION" -n "$COMPOSER_WINDOW" \
     "cat '$SHIM_DIR/composer-row.bin'; sleep 300" \
     || fail "could not create the composer fixture window"
-  # The pane's command needs a beat to draw; poll rather than fixing a sleep.
-  while [ "$i" -lt 100 ]; do
-    got=$(fm_tmux_composer_state "$COMPOSER_TARGET")
-    [ "$got" = "$want" ] && break
-    sleep 0.1
-    i=$((i + 1))
-  done
+  wait_for_composer_render "$want_cy" "$rendered" \
+    || fail "the composer fixture ($label) never rendered: expected cursor row $want_cy and bytes"$'\n'"$(printf '%s' "$rendered" | cat -A)"$'\n'"but the pane showed cursor row '${RENDER_CY:-<unreadable>}' and"$'\n'"$(printf '%s' "$RENDER_SEEN" | cat -A)"
+  got=$(fm_tmux_composer_state "$COMPOSER_TARGET")
   [ "$got" = "$want" ] \
-    || fail "real tmux composer row ($label) read '$got', expected '$want'"
+    || fail "real tmux composer row ($label) read '$got', expected '$want'"$'\n'"$(printf '%s' "$RENDER_SEEN" | cat -A)"
 }
 
 # The exact observed empty row: agent glyph + U+00A0, styled as claude emits it.
-composer_state_is "claude empty composer: ❯ + U+00A0" $'\033[39m❯'"$NBSP" empty
+composer_state_is "claude empty composer: ❯ + U+00A0" $'\033[39m❯'"$NBSP" 0 empty
 # The codex agent glyph with the same padding.
-composer_state_is "codex empty composer: › + U+00A0" $'\033[39m›'"$NBSP" empty
+composer_state_is "codex empty composer: › + U+00A0" $'\033[39m›'"$NBSP" 0 empty
 # Real typed text must still defer, including text that CONTAINS a no-break
 # space - the trim is leading/trailing only, never a content-stripping pass.
-composer_state_is "typed text after the glyph" $'\033[39m❯ fix findings 1 and 3' pending
-composer_state_is "typed text containing U+00A0" $'\033[39m❯ hello'"$NBSP"'world' pending
-composer_state_is "typed text right after U+00A0" $'\033[39m❯'"$NBSP"'hello' pending
+composer_state_is "typed text after the glyph" $'\033[39m❯ fix findings 1 and 3' 0 pending
+composer_state_is "typed text containing U+00A0" $'\033[39m❯ hello'"$NBSP"'world' 0 pending
+composer_state_is "typed text right after U+00A0" $'\033[39m❯'"$NBSP"'hello' 0 pending
 # The dead-shell safety boundary is unchanged by the wider trim.
-composer_state_is "bare dead-shell prompt" '$' unknown
+composer_state_is "bare dead-shell prompt" '$' 0 unknown
 
 # A BORDERED composer padded the same way. This is a second, independent layer:
 # the box geometry check measures whether a content row's interior is blank, and
@@ -202,8 +246,8 @@ composer_state_is "bare dead-shell prompt" '$' unknown
 # the reader sees the same structure a live agent shows.
 BOX_EMPTY="╭────────────╮"$'\n'"│ ❯$NBSP         │"$'\n'"╰────────────╯"$'\n'$'\033[2A'
 BOX_TEXT="╭────────────╮"$'\n'"│ ❯ ship it  │"$'\n'"╰────────────╯"$'\n'$'\033[2A'
-composer_state_is "bordered composer: ❯ + U+00A0" "$BOX_EMPTY" empty
-composer_state_is "bordered composer with text" "$BOX_TEXT" pending
+composer_state_is "bordered composer: ❯ + U+00A0" "$BOX_EMPTY" 1 empty
+composer_state_is "bordered composer with text" "$BOX_TEXT" 1 pending
 tmux kill-window -t "$COMPOSER_TARGET" 2>/dev/null || true
 pass "real tmux: a composer padded with U+00A0 reads empty, while real typed text (even containing U+00A0) stays pending"
 
