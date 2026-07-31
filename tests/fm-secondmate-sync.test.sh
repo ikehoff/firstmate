@@ -296,6 +296,10 @@ make_fake_toolchain() {
   # fixture supplies every runtime name instead of depending on the
   # developer's install set.
   fm_fake_harness_bins "$fakebin"
+  # Same reason as the harness stubs: bootstrap now also reports a shellcheck that
+  # is absent or off bin/fm-lint.sh's pin, and this suite pins a system PATH that
+  # does not carry the real pinned build.
+  fm_fake_shellcheck "$fakebin"
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 if [ -n "${FM_FAKE_TMUX_LOG:-}" ]; then

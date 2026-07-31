@@ -75,6 +75,7 @@ fi
 exit 0
 SH
   chmod +x "$fakebin/no-mistakes"
+  fm_fake_shellcheck "$fakebin"
   add_tasks_axi "$fakebin" "0.1.1"
   add_quota_axi "$fakebin"
   printf '%s\n' "$fakebin"
@@ -604,6 +605,60 @@ test_harness_executable_path_is_the_shared_resolver() {
   pass "fm-harness.sh executable-path: one resolver answers installed, verified-but-absent, and unverified"
 }
 
+test_absent_or_unpinned_shellcheck_is_reported() {
+  local case_dir fakebin out pin install_line
+  pin=$("$ROOT/bin/fm-lint.sh" --required-version)
+  install_line="MISSING: shellcheck (install: $ROOT/bin/fm-install-shellcheck.sh"
+
+  # Absent: bin/fm-lint.sh exits 127, so the repo's own lint gate cannot run and
+  # the first firstmate-repo task would fail mid-pipeline instead of at startup.
+  case_dir="$TMP_ROOT/shellcheck-absent"
+  fakebin=$(make_harness_case "$case_dir" claude '')
+  rm -f "$fakebin/shellcheck"
+  out=$(run_harness_case "$case_dir" "$fakebin")
+  assert_contains "$out" "$install_line" \
+    "bootstrap should report an absent ShellCheck with the repo's pinned installer"
+  # The captain is told to run `fm-bootstrap.sh install shellcheck`, which strips the
+  # trailing comment and evals the rest, so the command must actually be runnable.
+  [ -x "$ROOT/bin/fm-install-shellcheck.sh" ] \
+    || fail "the printed ShellCheck install command must name an executable script"
+
+  # Present but off the pin: bin/fm-lint.sh exits 1 rather than 127, so presence
+  # alone is not the requirement and must not silence the report.
+  case_dir="$TMP_ROOT/shellcheck-unpinned"
+  fakebin=$(make_harness_case "$case_dir" claude '')
+  fm_fake_shellcheck "$fakebin" "0.9.0"
+  out=$(run_harness_case "$case_dir" "$fakebin")
+  assert_contains "$out" "$install_line" \
+    "bootstrap should report a ShellCheck whose version is not the gate's pin"
+
+  # On the pin: no noise.
+  case_dir="$TMP_ROOT/shellcheck-pinned"
+  fakebin=$(make_harness_case "$case_dir" claude '')
+  fm_fake_shellcheck "$fakebin" "$pin"
+  out=$(run_harness_case "$case_dir" "$fakebin")
+  [ -z "$out" ] || fail "a ShellCheck on the gate's pin should keep bootstrap silent, got: $out"
+  pass "bootstrap: an absent or unpinned ShellCheck is reported at session start"
+}
+
+test_shellcheck_pin_has_one_owner() {
+  local case_dir fakebin out
+  # bin/fm-lint.sh owns the pin. If bootstrap ever restated the version instead of
+  # asking, the two would drift silently and the gate would still fail mid-run, so
+  # pin the delegation: a ShellCheck reporting exactly what fm-lint.sh asks for is
+  # accepted no matter what that value is, and bootstrap installs it with the same
+  # checksum-verified script CI uses.
+  case_dir="$TMP_ROOT/shellcheck-pin-owner"
+  fakebin=$(make_harness_case "$case_dir" claude '')
+  fm_fake_shellcheck "$fakebin" "$("$ROOT/bin/fm-lint.sh" --required-version)"
+  out=$(run_harness_case "$case_dir" "$fakebin")
+  assert_not_contains "$out" "shellcheck" \
+    "bootstrap must accept exactly the version bin/fm-lint.sh reports as required"
+  grep -q 'fm-install-shellcheck.sh' "$ROOT/.github/workflows/ci.yml" \
+    || fail "CI should install ShellCheck with the same script bootstrap recommends"
+  pass "bootstrap: the ShellCheck requirement is read from bin/fm-lint.sh, not restated"
+}
+
 test_json_backends_require_jq_not_tmux() {
   local backend case_dir fakebin bash_env out
   # herdr/zellij/cmux parse their backend's JSON output, so jq is a genuine dep.
@@ -927,6 +982,8 @@ test_absent_crew_harness_runtime_is_reported
 test_harness_roles_resolve_independently_and_collapse
 test_unverified_harness_name_is_not_reported_as_missing
 test_harness_executable_path_is_the_shared_resolver
+test_absent_or_unpinned_shellcheck_is_reported
+test_shellcheck_pin_has_one_owner
 test_json_backends_require_jq_not_tmux
 test_treehouse_lease_check_follows_resolved_backend
 test_fleet_sync_timeout_scales_with_origin_backed_project_count

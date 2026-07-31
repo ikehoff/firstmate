@@ -113,6 +113,27 @@ fm_fake_harness_bins() {
   fm_fake_exit0 "$fakebin" "$@"
 }
 
+# fm_fake_shellcheck <fakebin> [version] installs a shellcheck stub reporting a
+# version. Bootstrap reports shellcheck as MISSING when it is absent OR off
+# bin/fm-lint.sh's pin, and the real pinned build usually lives outside the
+# system PATH a suite pins, so any case that expects bootstrap silence needs this
+# stub. The default is the pin fm-lint.sh itself reports, so the stub can never
+# drift from the production requirement.
+fm_fake_shellcheck() {
+  local fakebin=$1 version=${2:-} root
+  root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+  [ -n "$version" ] || version=$("$root/bin/fm-lint.sh" --required-version)
+  cat > "$fakebin/shellcheck" <<SH
+#!/usr/bin/env bash
+if [ "\${1:-}" = --version ]; then
+  printf 'ShellCheck - shell script analysis tool\nversion: %s\nlicense: GNU General Public License, version 3\n' '$version'
+  exit 0
+fi
+exit 0
+SH
+  chmod +x "$fakebin/shellcheck"
+}
+
 # --- deterministic git identity and fixtures --------------------------------
 
 # fm_git_identity [name] [email]: export a fixed author/committer identity so

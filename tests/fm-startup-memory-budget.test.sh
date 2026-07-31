@@ -16,6 +16,14 @@ make_fake_toolchain() {
   local dir=$1 fakebin
   fakebin=$(fm_fakebin "$dir")
   fm_fake_exit0 "$fakebin" node gh-axi chrome-devtools-axi lavish-axi quota-axi
+  # An unconfigured home resolves its crew harness from whichever agent runs the
+  # suite, so bootstrap's missing-runtime report would otherwise depend on the
+  # developer's install set rather than on this suite's subject, the budget file.
+  fm_fake_harness_bins "$fakebin"
+  # Bootstrap reports a shellcheck that is absent or off bin/fm-lint.sh's pin, and
+  # the real pinned build usually sits outside the system PATH this suite pins, so
+  # the stub keeps every "stay quiet" case about the budget rather than the lint gate.
+  fm_fake_shellcheck "$fakebin"
   cat > "$fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 exit 0

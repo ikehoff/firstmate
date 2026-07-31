@@ -57,6 +57,13 @@
 #          "treehouse get --lease" support.
 #          no-mistakes is also MISSING when its installed version is older than
 #          1.31.2.
+#          The shellcheck tool is MISSING when it is absent OR its version is not the
+#          exact pin bin/fm-lint.sh reports for --required-version, because that
+#          gate - the repo's own lint command in .no-mistakes.yaml - refuses both.
+#          It bites only on firstmate-repo work, and it bites mid-pipeline, which
+#          is why it is detected here. bin/fm-lint.sh owns the pin; this inventory
+#          reads it. The install command is the repo's checksum-verified
+#          bin/fm-install-shellcheck.sh, the same one CI uses.
 #          tasks-axi and quota-axi are required bootstrap tools (same class as
 #          lavish-axi). tasks-axi is also version and feature gated (0.1.1+
 #          with update --archive-body and mv [<id>...]); an installed but
@@ -505,6 +512,10 @@ install_cmd() {
     no-mistakes) echo "curl -fsSL https://raw.githubusercontent.com/kunchenguid/no-mistakes/main/docs/install.sh | sh" ;;
     gh-axi|chrome-devtools-axi|lavish-axi) echo "npm install -g $1 && $1 setup hooks" ;;
     tasks-axi|quota-axi) echo "npm install -g $1" ;;
+    # The repo's own installer is the only sanctioned source: it pins the exact
+    # build bin/fm-lint.sh and CI both demand, and verifies its checksum. A
+    # package-manager ShellCheck of some other version is refused by the gate.
+    shellcheck) echo "$SCRIPT_DIR/fm-install-shellcheck.sh \"\$HOME/.local/bin\"  # pinned build; that directory must be on PATH" ;;
     *) return 1 ;;
   esac
 }
@@ -563,6 +574,29 @@ no_mistakes_compatible() {
   [ "$minor" -gt "$NO_MISTAKES_MIN_MINOR" ] && return 0
   [ "$minor" -eq "$NO_MISTAKES_MIN_MINOR" ] || return 1
   [ "$patch" -ge "$NO_MISTAKES_MIN_PATCH" ]
+}
+
+# firstmate's own lint gate refuses to run on anything but one exact ShellCheck
+# build, and .no-mistakes.yaml pins that gate as the repo's lint command. Without
+# it, a home looks completely healthy and then fails mid-pipeline on its first
+# firstmate-repo task - and the test suite hides the gap, because the suite's own
+# lint assertions self-skip and print as passes. Report it at session start
+# instead. An installed-but-unpinned ShellCheck is reported exactly like an absent
+# one, because bin/fm-lint.sh rejects both; that mirrors how an incompatible
+# no-mistakes or tasks-axi build is reported. bin/fm-lint.sh remains the single
+# owner of the pin, so this check reads it rather than restating it, and a
+# fm-lint.sh that cannot answer is left to report itself at the point of use.
+shellcheck_lint_check() {
+  local required found
+  required=$("$SCRIPT_DIR/fm-lint.sh" --required-version 2>/dev/null) || return 0
+  [ -n "$required" ] || return 0
+  if ! command -v shellcheck >/dev/null 2>&1; then
+    echo "MISSING: shellcheck (install: $(install_cmd shellcheck))"
+    return 0
+  fi
+  found=$(shellcheck --version 2>/dev/null | awk '/^version:/ {print $2; exit}')
+  [ "$found" = "$required" ] && return 0
+  echo "MISSING: shellcheck (install: $(install_cmd shellcheck))"
 }
 
 x_mode_write_if_changed() {
@@ -921,6 +955,7 @@ fi
 if command -v tasks-axi >/dev/null 2>&1 && ! fm_tasks_axi_compatible; then
   echo "MISSING: tasks-axi (install: $(install_cmd tasks-axi))"
 fi
+shellcheck_lint_check
 gh auth status >/dev/null 2>&1 || echo "NEEDS_GH_AUTH"
 # Worktree-tangle check: the firstmate primary checkout (FM_ROOT) must sit on its
 # default branch, not a feature branch (see fm-tangle-lib.sh). Scoped to the
