@@ -33,6 +33,10 @@
 #   direct-PR    implement -> push + open PR via gh-axi (no pipeline) -> captain merge
 #   local-only   implement on branch, stop and report "ready in branch" (no push/PR);
 #                captain approves, firstmate merges to local main
+# Every crewmate scaffold, ship and scout alike, opens with the standing
+# authority contract: firstmate is the only route to the captain, and the brief
+# itself grants everything the task needs inside the worktree, so a worker
+# neither addresses the captain directly nor stops for permission it already has.
 # Ship briefs begin with a worktree-isolation assertion before the branch step.
 # Scout tasks ignore mode - their deliverable is a report, not a merge.
 # Every scaffold's status protocol distinguishes the configured
@@ -250,6 +254,8 @@ fi
 if [ "$KIND" = scout ]; then
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
+Firstmate, not the captain, supervises you, and every crewmate message reaches the captain only through firstmate: address firstmate, never the captain or "the user".
+This brief is your authority: everything the task needs inside this worktree, including installing tools, running commands, editing files, and committing, is already granted, so do not stop to ask permission for it - escalate only what the rules below name.
 
 # Task
 {TASK}
@@ -358,6 +364,8 @@ DOD=${DOD%$'\n'}
 
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
+Firstmate, not the captain, supervises you, and every crewmate message reaches the captain only through firstmate: address firstmate, never the captain or "the user".
+This brief is your authority: everything the task needs inside this worktree, including installing tools, running commands, editing files, and committing, is already granted, so do not stop to ask permission for it - escalate only what the rules below name.
 
 # Task
 {TASK}

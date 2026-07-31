@@ -598,6 +598,46 @@ test_scout_and_secondmate_load_decision_hold_policy() {
   pass "fm-brief.sh: investigation and visual-review completions load the shared decision policy"
 }
 
+# Roughly half of observed dispatches lost time to a crewmate that stopped to ask
+# permission its own brief already granted, or answered the captain directly in a
+# pane the captain never reads. Both failures share one cause: the scaffold stated
+# the escalation path but never stated the standing authority behind it. Every
+# crewmate scaffold, ship and scout alike, must carry both halves. The secondmate
+# charter is deliberately excluded - a secondmate is a firstmate in its own home
+# and stays conversational when the captain types into its pane.
+test_crewmate_briefs_state_standing_authority() {
+  local home ship scout charter
+  home="$TMP_ROOT/authority-home"
+  mkdir -p "$home/data"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-authority-r1 some-proj >/dev/null 2>&1 \
+    || fail "fm-brief.sh ship scaffold exited non-zero"
+  ship="$home/data/brief-authority-r1/brief.md"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-authority-r2 some-proj --scout >/dev/null 2>&1 \
+    || fail "fm-brief.sh scout scaffold exited non-zero"
+  scout="$home/data/brief-authority-r2/brief.md"
+
+  for brief in "$ship" "$scout"; do
+    assert_present "$brief" "brief was not scaffolded"
+    assert_grep "address firstmate, never the captain or \"the user\"" "$brief" \
+      "$brief: crewmate brief lost the single-channel rule and may answer the captain directly"
+    assert_grep "This brief is your authority" "$brief" \
+      "$brief: crewmate brief lost the standing authority statement"
+    assert_grep "do not stop to ask permission for it" "$brief" \
+      "$brief: crewmate brief no longer forbids asking for permission it already granted"
+    assert_grep "escalate only what the rules below name" "$brief" \
+      "$brief: standing authority must still point at the escalation rules"
+  done
+
+  FM_SECONDMATE_CHARTER='Supervise the alpha domain.' \
+    FM_HOME="$home" "$ROOT/bin/fm-brief.sh" brief-authority-r3 --secondmate alpha >/dev/null 2>&1 \
+    || fail "fm-brief.sh secondmate scaffold exited non-zero"
+  charter="$home/data/brief-authority-r3/brief.md"
+  assert_no_grep "never the captain or" "$charter" \
+    "secondmate charter must not adopt the crewmate single-channel rule"
+  pass "fm-brief.sh: crewmate briefs state the standing authority and the single channel to the captain"
+}
+
 # Scout and secondmate paths still scaffold well-formed briefs.
 test_scout_and_secondmate_scaffold() {
   local brief
@@ -634,4 +674,5 @@ test_secondmate_marked_request_reporting_contract
 test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
+test_crewmate_briefs_state_standing_authority
 test_scout_and_secondmate_scaffold
