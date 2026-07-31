@@ -32,7 +32,11 @@
 #      damagingly a `failed` - is history rather than current state.
 #      The run-step is AUTHORITATIVE: running/fixing -> working, ci -> working,
 #      awaiting_approval/fix_review -> parked (with gate findings), terminal
-#      passed/checks-passed -> done, failed/cancelled -> failed. EXCEPT: while
+#      passed/checks-passed -> done, failed/cancelled -> failed. A failure also
+#      carries its cause from the run object's `error:` field, because `failed`
+#      alone does not distinguish a gate verdict on the code from infrastructure
+#      debris such as a validation-service restart or a rejected push, and those
+#      call for opposite responses (see nm_run_error_detail). EXCEPT: while
 #      the active step is ci, `axi status` alone cannot tell "still waiting on
 #      checks" from "checks green, waiting on merge" (see nm_ci_checks_state) -
 #      a ci-step log-tail check overrides working -> done once checks read
@@ -78,6 +82,14 @@ case "$NM_TIMEOUT" in ''|*[!0-9]*) NM_TIMEOUT=10 ;; esac
 # history every call.
 FM_CREW_STATE_RUNS_LIMIT=${FM_CREW_STATE_RUNS_LIMIT:-200}
 case "$FM_CREW_STATE_RUNS_LIMIT" in ''|*[!0-9]*) FM_CREW_STATE_RUNS_LIMIT=200 ;; esac
+# How many characters of a failed run's cause (nm_run_error_detail, below) reach
+# the emitted line. A real push rejection runs past 250 characters, and the
+# output is one token-tight line read every heartbeat, so the cause is truncated
+# rather than allowed to dominate it. The leading text carries the distinction
+# that matters (which step failed, and why), so a truncated cause still answers
+# "infrastructure or code?".
+FM_CREW_STATE_ERROR_MAX=${FM_CREW_STATE_ERROR_MAX:-160}
+case "$FM_CREW_STATE_ERROR_MAX" in ''|*[!0-9]*) FM_CREW_STATE_ERROR_MAX=160 ;; esac
 SEP=' · '
 
 # Emit the one canonical line and exit 0. Detail is optional.
@@ -229,6 +241,31 @@ nm_run() {  # <args...>
 RUN_OUT=""
 nm_field() {  # <key>
   printf '%s\n' "$RUN_OUT" | sed -n "s/^[[:space:]]*$1:[[:space:]]*\(.*\)/\1/p" | head -1
+}
+# Why a terminal run ended, from the run object's top-level `error:` field,
+# normalized to one bounded line; empty when the field is absent.
+#
+# This is the field that separates infrastructure debris from a real gate
+# verdict, and a bare `run failed` throws it away. Every failed run observed on
+# this fleet to date was infrastructure rather than bad code: `daemon shutting
+# down` (the validation service restarted mid-run, so the run cannot be resumed
+# and the fix is a fresh one), a `step push failed` credential rejection, and an
+# agent process that exited non-zero. Reading `failed` alone invites tearing a
+# crew down over a run that never judged its code at all.
+#
+# The field is quoted for multi-word values but bare for some daemon messages,
+# carries escaped newlines as a literal backslash-n, and can run to several
+# hundred characters; emit() produces exactly one line, so collapse and bound it.
+nm_run_error_detail() {
+  local e
+  e=$(strip_quotes "$(nm_field error)")
+  [ -n "$e" ] || return 0
+  e=$(printf '%s' "$e" | sed 's/\\n/; /g; s/[[:space:]][[:space:]]*/ /g')
+  e=$(trim "$e")
+  if [ ${#e} -gt "$FM_CREW_STATE_ERROR_MAX" ]; then
+    e="$(printf '%s' "$e" | cut -c "1-$FM_CREW_STATE_ERROR_MAX")..."
+  fi
+  printf '%s' "$e"
 }
 # Finding count from a findings[N]{...} table header; empty when none.
 nm_findings_count() {
@@ -573,6 +610,18 @@ if [ "$HAVE_RUN" = 1 ]; then
             ;;
         esac
       fi
+    fi
+    # Carry the cause of a terminal failure onto the emitted line, so a
+    # supervisor can tell a run that judged the code from one that never got
+    # there. Deliberately placed inside the full-`axi status` branch and not
+    # after the coarse fallback: on the coarse path $RUN_OUT holds ANOTHER
+    # branch's run object (that is why the fallback exists), so reading its
+    # error there would attribute a foreign run's cause to this crew. Scoping it
+    # here makes that misattribution structurally impossible rather than
+    # conditional, at the cost of a coarse-sourced failure staying bare.
+    if [ "$RUN_STATE" = failed ]; then
+      run_error=$(nm_run_error_detail)
+      [ -n "$run_error" ] && RUN_DETAIL="$RUN_DETAIL: $run_error"
     fi
   fi
 

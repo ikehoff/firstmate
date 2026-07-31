@@ -283,6 +283,36 @@ outcome: failed
 EOF
 }
 
+# Failure fixtures carrying the run object's `error:` field. Both bodies are the
+# real ones the installed no-mistakes v1.41.2 recorded on this fleet, copied
+# verbatim: the daemon message is emitted BARE (no quotes) while a step failure
+# is quoted and carries its embedded newline as a literal backslash-n.
+run_failed_daemon_restart() {  # <branch>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: failed
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  findings: none
+outcome: failed
+error: daemon shutting down
+EOF
+}
+
+run_failed_push_rejected() {  # <branch>
+  cat <<EOF
+run:
+  id: "01RUN"
+  branch: $1
+  status: failed
+  head: "${FM_FAKE_RUN_HEAD:-abc1234}"
+  findings: none
+outcome: failed
+error: "step push failed: push to upstream: git push https://github.com/o/r HEAD:refs/heads/$1: exit status 128: remote: Permission to o/r.git denied to someone.\nfatal: unable to access 'https://github.com/o/r/': The requested URL returned error: 403"
+EOF
+}
+
 run_ci_monitoring() {  # <branch>
   cat <<EOF
 run:
@@ -673,7 +703,71 @@ test_terminal_failed() {
   local out; out=$(run_crew_state "$d" feat-e)
   assert_contains "$out" "state: failed" "failed run -> failed"
   assert_contains "$out" "source: run-step" "failed -> run-step source"
+  assert_not_contains "$out" "run failed:" "a run object with no error field stays a bare 'run failed'"
   pass "terminal failed run is authoritative"
+}
+
+# A bare `failed` does not say WHETHER the run judged the code. Every failed run
+# recorded on this fleet to date was infrastructure - the validation service
+# restarting mid-run, or a push the forge rejected - and the correct response to
+# those (a fresh run, or a credential fix) is the opposite of the response to a
+# real gate verdict. The cause the run object already carries has to reach the
+# emitted line, or a supervisor tears a crew down over a run that never reviewed
+# anything.
+test_failed_run_reports_its_cause() {
+  reset_fakes
+  local d; d=$(new_case failed-cause-daemon)
+  make_repo_on_branch "$d/wt" fm/feat-ec
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-ec.meta" "window=fm:fm-feat-ec" "worktree=$d/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_failed_daemon_restart fm/feat-ec)"
+  local out; out=$(run_crew_state "$d" feat-ec)
+  assert_contains "$out" "state: failed" "restart debris is still a failed run"
+  assert_contains "$out" "run failed: daemon shutting down" \
+    "an unquoted daemon cause reaches the emitted line"
+
+  # A real push rejection is one quoted value holding an escaped newline and
+  # running well past the emitted line's budget. It must arrive on ONE line,
+  # bounded, with the leading text - the part naming the failing step - intact.
+  reset_fakes
+  local d2; d2=$(new_case failed-cause-push)
+  make_repo_on_branch "$d2/wt" fm/feat-ep
+  make_fakebin "$d2" >/dev/null
+  fm_write_meta "$d2/state/feat-ep.meta" "window=fm:fm-feat-ep" "worktree=$d2/wt" "kind=ship"
+  FM_FAKE_AXI_STATUS="$(run_failed_push_rejected fm/feat-ep)"
+  local out2; out2=$(run_crew_state "$d2" feat-ep)
+  assert_contains "$out2" "run failed: step push failed: push to upstream:" \
+    "a quoted step-failure cause reaches the emitted line"
+  assert_contains "$out2" "..." "an over-long cause is marked truncated"
+  assert_not_contains "$out2" "error: 403" "the tail past the bound is actually dropped, not just marked"
+  [ "$(printf '%s\n' "$out2" | wc -l)" -eq 1 ] \
+    || fail "an embedded newline must not split the emitted line: $out2"
+  [ "${#out2}" -lt 400 ] || fail "emitted line is unbounded (${#out2} chars): $out2"
+  pass "a failed run reports the cause that separates infrastructure from a verdict"
+}
+
+# The coarse fallback exists precisely BECAUSE $RUN_OUT belongs to another
+# branch, so reading its error there would print a foreign crew's failure cause
+# on this crew's line. A bare 'run failed' is the honest answer here.
+test_coarse_failed_does_not_borrow_another_branch_cause() {
+  reset_fakes
+  local d short; d=$(new_case failed-cause-coarse)
+  make_repo_on_branch "$d/wt" fm/feat-eb
+  short=$(git -C "$d/wt" rev-parse --short=7 HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/feat-eb.meta" "window=fm:fm-feat-eb" "worktree=$d/wt" "kind=ship"
+  # Repo-wide most-recent run is a DIFFERENT branch that failed with a cause.
+  FM_FAKE_AXI_STATUS="$(run_failed_daemon_restart fm/other-crew)"
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  failed     fm/other-crew aaaaaaa  2026-07-30 22:10
+  failed     fm/feat-eb ${short}  2026-07-30 22:05
+EOF
+)"
+  local out; out=$(run_crew_state "$d" feat-eb)
+  assert_contains "$out" "state: failed" "this branch's own failed row is still attributed"
+  assert_not_contains "$out" "daemon shutting down" \
+    "another branch's failure cause never reaches this crew's line"
+  pass "a coarse-resolved failure does not borrow another branch's cause"
 }
 
 # (e) cross-branch attribution: `axi status` returns ANOTHER branch's run (the
@@ -1286,6 +1380,8 @@ test_top_level_fixing_ci_running_after_green_stays_working
 test_top_level_fixing_done_log_stays_working
 test_terminal_passed
 test_terminal_failed
+test_failed_run_reports_its_cause
+test_coarse_failed_does_not_borrow_another_branch_cause
 test_cross_branch_attribution_via_runs_list
 test_cross_branch_attribution_picks_most_recent_row
 test_superseded_failed_row_not_attributed_under_newer_run
