@@ -14,7 +14,9 @@
 #   is cloned into the secondmate home, while the natural-language scope
 #   tells the main firstmate when to route work there; routine churn stays in its own home;
 #   captain-relevant escalations and marked from-firstmate replies append to this
-#   home's status file.
+#   home's status file. Every routed task's terminal outcome reports there too,
+#   whether it arrived as a marked request or as a handed-off backlog item, because
+#   the secondmate's own records are invisible to the main firstmate.
 #   --no-projects writes a project-less charter for a domain whose subject is the
 #   firstmate repo itself (its home is a firstmate worktree, its crews take pooled
 #   worktrees of the same repo). It is mutually exclusive with a project list, and
@@ -184,7 +186,8 @@ Optional helper: \`bin/fm-secondmate-report.sh\` can append a correlated status 
 For a terse result, a status line is the whole answer.
 For a detailed answer (an investigation, a plan, an audit), write it to a doc under your home's \`data/\` and append a status line that points to that doc - the scout-report pattern - so the main firstmate is woken and can read it.
 Before treating an investigation or visual review as complete, load \`decision-hold-lifecycle\` from this home's \`.agents/skills/\` and pass its shared completion gate.
-A message with NO marker is the captain typing directly into your pane: treat it as authoritative captain intervention and stay conversational exactly as you would for any captain message; do not force it onto the status path.
+A message with NO marker is the captain typing directly into your pane: treat it as authoritative captain intervention and stay conversational exactly as you would for any captain message; do not relay ordinary conversation onto the status path.
+Staying conversational governs the reply, not the reporting: the main firstmate does not read this chat, so if that exchange finished routed work, redirected your domain, or raised a decision or blocker the main firstmate must act on, append the status line for it as well.
 
 # Escalation to main firstmate
 Handle routine work yourself.
@@ -194,6 +197,9 @@ States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
 Use \`$PAUSED_VERB: {why}\` (distinct from \`blocked:\`) only when your domain is deliberately idling on a known external wait you expect to clear on its own; use \`blocked:\` when you are stuck and need firstmate to act.
 Use this only for material phase changes, a captain decision, a real blocker, a failure, or work ready for review.
 This is also how you return the answer to a marked from-firstmate request above.
+Every task the main firstmate routes to you reports its terminal outcome here, whichever way it arrived: as a marked request above, or as an item placed in this home's backlog for you to work.
+Append that \`done:\` or \`failed:\` line as part of finishing the item, not after it.
+Closing your own backlog entry, tearing down its crew, and landing its PR are internal bookkeeping the main firstmate cannot see, so a finish you never reported reads to it as work still running.
 A marked request requires one correlated answer after the work; it does not require a separate receipt or start acknowledgement.
 Never append \`working:\` merely to acknowledge receipt or announce that a marked request has started.
 When a routed-work phase has a supervisor-actionable material change worth reporting under the rule above, give that reported phase a stable key.

@@ -147,6 +147,10 @@ It is idempotent; an item already in the secondmate backlog is skipped.
 It refuses any destination that is not a genuine seeded firstmate home with safe operational directories and a matching `.fm-secondmate-home` marker, so a move can never land in a project.
 Do not hand off `local-only` items.
 
+A handed-off item is routed work, so the charter has the secondmate append that item's terminal outcome to its `state/<id>.status` file in this home, exactly as it answers a marked request.
+That status line is the only way the parent learns a handed-off item finished: the secondmate's own backlog, crew, and PR records live in its home and are invisible here, and an idle secondmate endpoint is healthy rather than a completion signal.
+A handed-off item that has gone quiet with no terminal line is therefore a secondmate to probe, not an item to assume done.
+
 ## Recovery
 
 For `kind=secondmate` meta with no window, treat the secondmate as a dead persistent direct report and respawn it with:

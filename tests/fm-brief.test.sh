@@ -436,6 +436,46 @@ test_secondmate_marked_request_reporting_contract() {
   pass "fm-brief.sh: marked requests avoid generic acknowledgements and preserve material reporting"
 }
 
+test_secondmate_reports_every_routed_task_terminally() {
+  local home brief
+  home="$TMP_ROOT/routed-terminal-home"
+  mkdir -p "$home/data"
+  FM_HOME="$home" FM_CLASSIFY_PAUSED_VERB=paused \
+    FM_SECONDMATE_CHARTER='Handle routed domain work.' \
+    "$ROOT/bin/fm-brief.sh" routed-terminal --secondmate --no-projects >/dev/null 2>&1
+  brief="$home/data/routed-terminal/brief.md"
+
+  # A handed-off backlog item never carries a corr= marker, so the marked-request
+  # contract above does not reach it. Without this rule a secondmate can close the
+  # item in its own home and the parent never learns it finished.
+  assert_grep 'Every task the main firstmate routes to you reports its terminal outcome here' "$brief" \
+    "secondmate charter did not require a terminal report for every routed task"
+  assert_grep "as an item placed in this home's backlog for you to work" "$brief" \
+    "secondmate charter did not extend terminal reporting to handed-off backlog items"
+  assert_grep "Append that \`done:\` or \`failed:\` line as part of finishing the item" "$brief" \
+    "secondmate charter did not name the terminal states or bind the report to finishing"
+  assert_grep 'internal bookkeeping the main firstmate cannot see' "$brief" \
+    "secondmate charter did not state why local records are not a report"
+  assert_grep 'a finish you never reported reads to it as work still running' "$brief" \
+    "secondmate charter did not state the consequence of a silent finish"
+
+  # An unmarked message is the captain in the pane, so the reply stays conversational.
+  # That must not be read as permission to leave the fleet outcome in chat only.
+  assert_grep 'Staying conversational governs the reply, not the reporting' "$brief" \
+    "secondmate charter let a conversational reply stand in for reporting"
+  assert_grep 'append the status line for it as well' "$brief" \
+    "secondmate charter did not require a status line for captain-intervention outcomes"
+  assert_no_grep 'do not force it onto the status path' "$brief" \
+    "secondmate charter retained the blanket ban on reporting a captain-intervention outcome"
+
+  # The rules must not be mistaken for permission to narrate routine internal churn.
+  assert_grep 'do not relay ordinary conversation onto the status path' "$brief" \
+    "secondmate charter lost the ordinary-conversation exclusion"
+  assert_grep 'Routine internal supervision, heartbeats, retries, and crewmate churn stay inside your own home' "$brief" \
+    "secondmate charter lost the internal-churn exclusion"
+  pass "fm-brief.sh: no channel lets a secondmate's routed outcome go unreported"
+}
+
 test_secondmate_directory_paths_are_absolute_and_output_is_stable() {
   local root home data_override state_override brief baseline err status
   root="$TMP_ROOT/relative-directory-inputs"
@@ -671,6 +711,7 @@ test_herdr_lab_omission_is_loud_for_ship_and_scout
 test_herdr_lab_contract_applies_to_scouts_but_not_secondmates
 test_secondmate_no_projects_charter
 test_secondmate_marked_request_reporting_contract
+test_secondmate_reports_every_routed_task_terminally
 test_secondmate_directory_paths_are_absolute_and_output_is_stable
 test_pause_verb_override_renders_all_brief_scaffolds
 test_scout_and_secondmate_load_decision_hold_policy
