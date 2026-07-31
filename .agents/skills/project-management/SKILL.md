@@ -63,6 +63,10 @@ After remote creation succeeds, clone it locally, add the registry entry, and in
 For a purely `local-only` project, create a local Git repository under its unused `projects/<name>` path, add the registry entry, and make no GitHub call.
 The captain's request to create that local project authorizes this local initialization, but it does not authorize an unmentioned remote repository.
 
+A freshly created repository has no commits, and no worktree can be based on an unborn branch, so `bin/fm-spawn.sh` refuses to dispatch into it and names the missing initial commit.
+Registering such a project is correct and the registry entry should record that it is empty; the project simply cannot receive work until an initial commit lands on its default branch.
+Firstmate does not create that commit itself, so raise it with the captain as the concrete blocker before promising a first task.
+
 ## Initialize
 
 Run no-mistakes initialization only for `no-mistakes` projects:

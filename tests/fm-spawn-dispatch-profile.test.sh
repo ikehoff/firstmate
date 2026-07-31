@@ -590,6 +590,60 @@ test_missing_verified_harness_refuses_before_endpoint_or_metadata() {
   pass "an uninstalled verified harness refuses before any endpoint or metadata exists"
 }
 
+# A registered project whose repository holds no commit cannot host a worktree at
+# all. Without the preflight the spawn creates an endpoint, types the worktree
+# command, and only gives up after the 60s settle poll with an error naming the
+# worktree step rather than the unborn default branch.
+test_commitless_project_refuses_before_endpoint_or_metadata() {
+  local rec id out status windowlog empty
+  id=profile-empty-project-z8g
+  rec=$(make_spawn_case profile-empty-project codex "$id")
+  read_case_record "$rec"
+  empty="$CASE_DIR/emptyrepo"
+  git init -q -b main "$empty"
+  windowlog="$CASE_DIR/window.log"
+  : > "$LAUNCH_LOG"
+  : > "$windowlog"
+
+  out=$(FM_ROOT_OVERRIDE='' FM_HOME="$HOME_DIR" \
+    FM_STATE_OVERRIDE="$HOME_DIR/state" FM_DATA_OVERRIDE="$HOME_DIR/data" \
+    FM_PROJECTS_OVERRIDE="$HOME_DIR/projects" FM_CONFIG_OVERRIDE="$HOME_DIR/config" \
+    FM_SPAWN_NO_GUARD=1 FM_FAKE_PANE_PATH="$WT_DIR" TMUX="fake,1,0" \
+    FM_FAKE_LAUNCH_LOG="$LAUNCH_LOG" FM_FAKE_WINDOW_LOG="$windowlog" \
+    GROK_HOME="$HOME_DIR/grok-home" PATH="$FAKEBIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin" \
+    "$SPAWN" "$id" "$empty" 2>&1)
+  status=$?
+  expect_code 1 "$status" "a project with no commits should refuse the spawn"
+  assert_contains "$out" "has no commits" \
+    "commitless project refusal did not name the real cause"
+  assert_contains "$out" "branch 'main' is unborn" \
+    "commitless project refusal did not name the unborn branch"
+  assert_absent "$HOME_DIR/state/$id.meta" "commitless project refusal wrote task metadata"
+  [ ! -s "$windowlog" ] || fail "commitless project refusal created an endpoint"
+  [ ! -s "$LAUNCH_LOG" ] || fail "commitless project refusal typed a launch command"
+  pass "a project repository with no commits refuses before any endpoint or metadata exists"
+}
+
+# The commitless-project refusal is deliberately narrow: it fires only for a path
+# that is itself a git repository root. A project path that is not a repository
+# root is a different misconfiguration with a different remedy, and must keep its
+# existing downstream behavior rather than being absorbed into this refusal.
+test_non_repository_project_is_not_refused_as_commitless() {
+  local rec id out status plain
+  id=profile-plain-project-z8h
+  rec=$(make_spawn_case profile-plain-project codex "$id")
+  read_case_record "$rec"
+  plain="$CASE_DIR/plaindir"
+  mkdir -p "$plain"
+
+  out=$(run_spawn "$HOME_DIR" "$WT_DIR" "$FAKEBIN_DIR" "$LAUNCH_LOG" "$id" "$plain")
+  status=$?
+  expect_code 0 "$status" "a non-repository project path should not hit the commitless refusal"
+  assert_not_contains "$out" "has no commits" \
+    "a non-repository project path was misreported as a commitless repository"
+  pass "the commitless-project refusal does not fire for a path that is not a repository root"
+}
+
 # A raw launch command is the unverified-adapter escape hatch: its first word may
 # be an absolute path, so its derived harness label must never drive a PATH lookup
 # even when that label collides with a verified adapter name.
@@ -747,6 +801,8 @@ test_pi_threads_model_and_max_effort
 test_pi_signed_threads_shared_pi_profile_and_preserves_identity
 test_pi_signed_missing_binary_refuses_before_endpoint_or_metadata
 test_missing_verified_harness_refuses_before_endpoint_or_metadata
+test_commitless_project_refuses_before_endpoint_or_metadata
+test_non_repository_project_is_not_refused_as_commitless
 test_raw_launch_command_is_exempt_from_the_harness_path_check
 test_pi_signed_persistent_secondmate_uses_pi_extensions_and_identity
 test_batch_forwards_shared_profile_flags

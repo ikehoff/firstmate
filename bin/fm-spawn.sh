@@ -100,6 +100,10 @@
 #   default-branch commit when safe; skipped syncs warn and launch unchanged.
 #   Ship/scout spawns refuse to launch unless the resolved task path is a real
 #   git worktree root distinct from the primary project checkout.
+#   A ship/scout spawn also refuses, before any endpoint or metadata exists, when
+#   the project path is a git repository root holding zero commits: no worktree
+#   can be based on an unborn branch, so the error names the missing initial
+#   commit instead of letting the worktree step time out inside the pane.
 # Batch dispatch: pass one or more `id=repo` pairs instead of a single <id> <project>, e.g.
 #     fm-spawn.sh fix-a-k3=projects/foo add-b-q7=projects/bar [--scout]
 #   Each pair re-execs this script in single-task mode, so the single path stays the only
@@ -893,6 +897,36 @@ BRIEF_REAL="$BRIEF_DIR_REAL/$(basename "$BRIEF")"
 # once here so every downstream comparison uses the same physical form
 # (docs/herdr-backend.md "Known gaps").
 PROJ_ABS_REAL=$(cd "$PROJ_ABS" 2>/dev/null && pwd -P) || PROJ_ABS_REAL="$PROJ_ABS"
+
+# A project clone whose default branch is unborn - a git repository holding zero
+# commits - cannot be dispatched to at all, because every worktree path this
+# spawn can take needs a commit to base the new worktree on (`treehouse get` for
+# the shell backends, fm_backend_orca_worktree_create for Orca). Without this
+# preflight the failure still happens, but INSIDE the pane: the endpoint is
+# created, the worktree command is typed, and the spawn only gives up after the
+# 60s worktree-settle poll below, naming the worktree step rather than the real
+# cause. Refuse here instead, before any endpoint or task metadata exists, and
+# name the unborn branch so the caller knows an initial commit is the fix.
+#
+# Deliberately narrow, so it refuses only what is certainly undispatchable: the
+# project path must itself be the root of a git repository AND hold no commit. A
+# path that is not a repository root is left to the existing downstream failure,
+# because that is a different misconfiguration with a different remedy.
+#
+# Ordered after the brief check on purpose: a missing brief is the cheaper and
+# more common caller mistake, and both refusals precede every endpoint.
+if [ "$KIND" != secondmate ]; then
+  proj_top=$(git -C "$PROJ_ABS" rev-parse --show-toplevel 2>/dev/null || true)
+  if [ -n "$proj_top" ]; then
+    proj_top_real=$(cd "$proj_top" 2>/dev/null && pwd -P) || proj_top_real=$proj_top
+    if [ "$proj_top_real" = "$PROJ_ABS_REAL" ] \
+      && ! git -C "$PROJ_ABS" rev-parse --verify --quiet HEAD >/dev/null 2>&1; then
+      proj_branch=$(git -C "$PROJ_ABS" symbolic-ref --short HEAD 2>/dev/null || true)
+      echo "error: project $PROJ_ABS has no commits, so no worktree can be created for it (branch '${proj_branch:-HEAD}' is unborn); land an initial commit on its default branch before dispatching work here" >&2
+      exit 1
+    fi
+  fi
+fi
 
 real_path_or_raw() {  # <path>
   local path=$1 real
