@@ -197,6 +197,29 @@ test_composer_state_popup_placeholder_fill_is_pending() {
   pass "fm_backend_orca_composer_state: a slash-command popup's argument-hint placeholder still reads pending"
 }
 
+# Task fm-composer-nbsp, adapter half: this adapter's own inline ASCII trim was
+# retired in favor of the shared owner's padding class (FM_COMPOSER_WS in
+# bin/fm-composer-lib.sh), so the claude-rendered empty composer - `❯` followed
+# by U+00A0 NO-BREAK SPACE, written here as the raw bytes C2 A0 rather than a
+# typed character - must reach the same `empty` verdict it reaches on tmux. The
+# scope boundary is pinned alongside it: a no-break space INSIDE typed text is
+# content, so that row stays `pending`.
+test_composer_state_nbsp_padding_is_empty() {
+  local out
+  orca_case composer-nbsp-padding
+  printf '{"ok":true,"result":{"terminal":{"tail":["  ╭──────────────────────────────────────╮","  │ \xe2\x9d\xaf\xc2\xa0                                   │","  ╰──────────────── Composer ─────────────╯"]}}}\n' > "$RESP/1.out"
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_composer_state term-123' "$ROOT" )
+  [ "$out" = empty ] || fail "a U+00A0-padded empty composer should read empty on orca, got '$out'"
+
+  orca_case composer-nbsp-text
+  printf '{"ok":true,"result":{"terminal":{"tail":["  ╭──────────────────────────────────────╮","  │ \xe2\x9d\xaf hello\xc2\xa0captain                      │","  ╰──────────────── Composer ─────────────╯"]}}}\n' > "$RESP/1.out"
+  out=$( PATH="$FB:$PATH" FM_ORCA_LOG="$LOG" FM_ORCA_RESPONSES="$RESP" \
+    bash -c '. "$0/bin/backends/orca.sh"; fm_backend_orca_composer_state term-123' "$ROOT" )
+  [ "$out" = pending ] || fail "typed text containing U+00A0 must stay pending on orca, got '$out'"
+  pass "fm_backend_orca_composer_state: U+00A0 padding reads empty, while U+00A0 inside typed text stays pending"
+}
+
 # Dead-shell injection safety (task fm-composer-shellglyph-safety): a pane whose
 # agent has exited to a bare login shell has no bordered composer row, so the
 # classifier finds nothing and reports `unknown` - NOT a safe (empty) injection
@@ -1285,6 +1308,7 @@ test_send_text_submit_verifies_empty_composer_after_enter
 test_send_text_submit_keeps_current_tail_when_limited
 test_send_text_submit_retries_when_composer_stays_pending
 test_composer_state_popup_placeholder_fill_is_pending
+test_composer_state_nbsp_padding_is_empty
 test_composer_state_bare_shell_prompt_is_unknown
 test_send_text_submit_popup_autocomplete_requires_second_enter
 test_send_literal_constructs_non_enter_send

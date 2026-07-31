@@ -190,7 +190,8 @@ The detector is therefore written against the whole padding class rather than pi
 `FM_COMPOSER_WS` in `bin/fm-composer-lib.sh` is the single owner of that class and of what is deliberately excluded from it.
 Re-running the capture above after a harness upgrade is the check for a padding character outside the class; a new one shows up as an idle composer reading `pending`.
 
-`tests/fm-composer-lib.test.sh` and `tests/fm-backend-tmux-smoke.test.sh` are the reusable regression, the second against a real tmux pane, and both build their fixtures from the bytes above rather than typed approximations.
+The reusable regression spans every layer that reads the padding: `tests/fm-composer-lib.test.sh` pins the shared trim and the classifier verdict, `tests/fm-composer-ghost.test.sh` pins the tmux box-geometry blank test above the classifier, `tests/fm-backend-tmux-smoke.test.sh` asserts the same shapes against a real rendered tmux pane, and `tests/fm-backend-cmux.test.sh`, `tests/fm-backend-herdr.test.sh`, and `tests/fm-backend-orca.test.sh` pin the identical verdict on the other three adapters now that they route through the shared owner.
+Each of them builds its fixtures from the bytes above rather than typed approximations, and each pins the scope boundary alongside them: the same character inside typed text is content and stays `pending`.
 
 Trimming the whole class does not cost more than the ASCII-only trim it replaced, even though the structural scan trims every pane row.
 Measured on the same date over 30 iterations against one captured 68-row pane snapshot, the structural scan `fm_tmux_find_composer_box` runs in 21-23 ms with the class trim against 50-52 ms with the previous inline ASCII trim.
