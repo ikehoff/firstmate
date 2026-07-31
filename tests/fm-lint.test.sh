@@ -127,7 +127,7 @@ SH
 
 test_catches_a_real_lint_defect() {
   if ! pinned_ready; then
-    pass "SKIP (ShellCheck $REQUIRED not resolved): lint-defect regression check"
+    skip "ShellCheck $REQUIRED not resolved: lint-defect regression check"
     return
   fi
   # A script with a genuine ShellCheck finding must make the one owner exit
@@ -158,7 +158,7 @@ SH
 
 test_ignores_ambient_shellcheck_opts() {
   if ! pinned_ready; then
-    pass "SKIP (ShellCheck $REQUIRED not resolved): ambient options regression check"
+    skip "ShellCheck $REQUIRED not resolved: ambient options regression check"
     return
   fi
   local tmp bad out rc
@@ -182,7 +182,7 @@ SH
 
 test_clean_fixture_passes() {
   if ! pinned_ready; then
-    pass "SKIP (ShellCheck $REQUIRED not resolved): clean fixture check"
+    skip "ShellCheck $REQUIRED not resolved: clean fixture check"
     return
   fi
   local tmp good rc
@@ -204,7 +204,7 @@ SH
 
 test_jobs_are_deterministic_and_complete() {
   if ! pinned_ready; then
-    pass "SKIP (ShellCheck $REQUIRED not resolved): deterministic bounded jobs check"
+    skip "ShellCheck $REQUIRED not resolved: deterministic bounded jobs check"
     return
   fi
   local tmp good bad_a bad_b out_clean_1 out_clean_2 out_fail_1 out_fail_2 out_fail_2b
@@ -357,7 +357,7 @@ SH
 
 test_seeded_module_boundary_parity() {
   if ! pinned_ready; then
-    pass "SKIP (ShellCheck $REQUIRED not resolved): seeded source-boundary parity check"
+    skip "ShellCheck $REQUIRED not resolved: seeded source-boundary parity check"
     return
   fi
   local tmp rel adapter dispatcher dep owner test_root out rc

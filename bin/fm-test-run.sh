@@ -46,15 +46,29 @@
 # Per-script machine-parseable markers (stdout):
 #   FM_TEST_BEGIN <iso8601> <script> family=<family> expected_gate_skip=<class>
 #   FM_TEST_END <iso8601> <script> exit=<code> duration_ms=<n> gate_skip=<true|false>
+#     skipped_checks=<n>
 #
 # After all scripts (stdout):
-#   FM_TEST_SUMMARY total=<n> failed=<n> skipped_gate=<n> duration_ms=<n>
+#   FM_TEST_SUMMARY total=<n> failed=<n> skipped_gate=<n> skipped_checks=<n>
+#     duration_ms=<n>
 #   FM_TEST_SUMMARY_FAMILY family=<name> count=<n> duration_ms=<n> failed=<n>
+#   FM_TEST_SKIPPED script=<path> reason=<text>
 #   FM_TEST_SLOWEST rank=<k> script=<path> duration_ms=<n>
 #
 # Exit status is non-zero if any selected script exits non-zero or a configured
 # --fail-on-gate-skip token appears. Other gate skips (first meaningful line
 # matching ^skip:) remain successful and are counted as skipped_gate.
+#
+# Two different skips are counted separately and neither is a failure:
+#   skipped_gate   a WHOLE script declined to run, declared by "skip: <reason>"
+#                  as its first meaningful output line.
+#   skipped_checks INDIVIDUAL checks inside a script that ran could not execute,
+#                  each declared by a "skip - <reason>" line from tests/lib.sh's
+#                  skip reporter. These used to print as "ok - ...", so a machine
+#                  missing ShellCheck, jq, or zsh produced an all-green run whose
+#                  coverage was quietly smaller. Every one is echoed back after
+#                  the summary as FM_TEST_SKIPPED so a green run states what it
+#                  did not check.
 #
 # Family labels, the changed-file map, and production portable-shard composition
 # live in this script only (one owner). The proven-isolated candidate set remains
@@ -463,8 +477,10 @@ out = Path(sys.argv[1])
 inputs = [Path(p) for p in sys.argv[2:]]
 lanes = []
 all_scripts = []
+all_skipped_checks = []
 failed = 0
 skipped = 0
+skipped_checks = 0
 total = 0
 wall_ms = 0
 for path in inputs:
@@ -482,12 +498,17 @@ for path in inputs:
     total += int(summary.get("total") or 0)
     failed += int(summary.get("failed") or 0)
     skipped += int(summary.get("skipped_gate") or 0)
+    skipped_checks += int(summary.get("skipped_checks") or 0)
     wall_ms = max(wall_ms, int(summary.get("duration_ms") or 0))
     for s in doc.get("scripts") or []:
         row = dict(s)
         row["lane_selection"] = doc.get("selection")
         row["lane_run_id"] = doc.get("run_id")
         all_scripts.append(row)
+    for row in doc.get("skipped_checks") or []:
+        entry = dict(row)
+        entry["lane_run_id"] = doc.get("run_id")
+        all_skipped_checks.append(entry)
 
 all_scripts.sort(key=lambda s: (-int(s.get("duration_ms") or 0), s.get("path") or ""))
 agg = {
@@ -498,14 +519,16 @@ agg = {
         "total": total,
         "failed": failed,
         "skipped_gate": skipped,
+        "skipped_checks": skipped_checks,
         "critical_path_duration_ms": wall_ms,
     },
     "scripts": all_scripts,
+    "skipped_checks": all_skipped_checks,
     "slowest": all_scripts[:15],
 }
 out.parent.mkdir(parents=True, exist_ok=True)
 out.write_text(json.dumps(agg, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-print(f"FM_TEST_AGGREGATE lanes={len(lanes)} total={total} failed={failed} skipped_gate={skipped} critical_path_duration_ms={wall_ms}")
+print(f"FM_TEST_AGGREGATE lanes={len(lanes)} total={total} failed={failed} skipped_gate={skipped} skipped_checks={skipped_checks} critical_path_duration_ms={wall_ms}")
 PY
 }
 
@@ -798,6 +821,24 @@ detect_gate_skip_token() {
   grep -F -q "skip: $token" "$file" 2>/dev/null
 }
 
+# record_skipped_checks <script> <output-file> echoes how many individual checks
+# the script declined to run, and appends "<script>\t<reason>" for each to
+# SKIPS_TSV so the run can name them after the summary.
+#
+# The marker is tests/lib.sh's skip reporter: a line reading "skip - <reason>".
+# It is deliberately distinct from the whole-script gate marker "skip:", which
+# detect_gate_skip matches on the first meaningful line only, so a suite can
+# report both without either count absorbing the other.
+record_skipped_checks() {
+  local script=$1 file=$2 line reason count=0
+  while IFS= read -r line; do
+    reason=${line#skip - }
+    printf '%s\t%s\n' "$script" "$reason" >>"$SKIPS_TSV"
+    count=$((count + 1))
+  done < <(grep '^skip - ' "$file" 2>/dev/null || true)
+  printf '%s\n' "$count"
+}
+
 apply_exclude_families() {
   local s fam keep ex
   local -a kept=()
@@ -824,19 +865,21 @@ write_json_artifact() {
   local total=$5
   local failed=$6
   local skipped=$7
-  local duration=$8
-  local selection=$9
-  local records_file=${10}
-  local families_file=${11}
+  local skipped_checks=$8
+  local duration=$9
+  local selection=${10}
+  local records_file=${11}
+  local families_file=${12}
+  local skips_file=${13}
 
   if ! command -v python3 >/dev/null 2>&1; then
     die "--json requires python3 to emit a valid timing artifact"
   fi
 
-  python3 - "$out" "$started" "$finished" "$run_id" "$total" "$failed" "$skipped" "$duration" "$selection" "$records_file" "$families_file" <<'PY'
+  python3 - "$out" "$started" "$finished" "$run_id" "$total" "$failed" "$skipped" "$skipped_checks" "$duration" "$selection" "$records_file" "$families_file" "$skips_file" <<'PY'
 import json, sys
 
-out, started, finished, run_id, total, failed, skipped, duration, selection, records_file, families_file = sys.argv[1:]
+out, started, finished, run_id, total, failed, skipped, skipped_checks, duration, selection, records_file, families_file, skips_file = sys.argv[1:]
 
 scripts = []
 with open(records_file, encoding="utf-8") as fh:
@@ -844,7 +887,7 @@ with open(records_file, encoding="utf-8") as fh:
         line = line.rstrip("\n")
         if not line:
             continue
-        path, family, expected, exit_s, dur_s, gate = line.split("\t")
+        path, family, expected, exit_s, dur_s, gate, script_skips = line.split("\t")
         scripts.append({
             "path": path,
             "family": family,
@@ -852,7 +895,19 @@ with open(records_file, encoding="utf-8") as fh:
             "duration_ms": int(dur_s),
             "exit": int(exit_s),
             "gate_skip": gate == "true",
+            "skipped_checks": int(script_skips),
         })
+
+# Every check that did not run, so a consumer of the artifact can see what a
+# green lane left unverified rather than only that it was green.
+skipped_check_rows = []
+with open(skips_file, encoding="utf-8") as fh:
+    for line in fh:
+        line = line.rstrip("\n")
+        if not line:
+            continue
+        path, reason = line.split("\t", 1)
+        skipped_check_rows.append({"path": path, "reason": reason})
 
 families = []
 with open(families_file, encoding="utf-8") as fh:
@@ -877,10 +932,12 @@ doc = {
         "total": int(total),
         "failed": int(failed),
         "skipped_gate": int(skipped),
+        "skipped_checks": int(skipped_checks),
         "duration_ms": int(duration),
     },
     "scripts": scripts,
     "families": families,
+    "skipped_checks": skipped_check_rows,
 }
 with open(out, "w", encoding="utf-8") as fh:
     json.dump(doc, fh, indent=2, sort_keys=True)
@@ -1114,16 +1171,19 @@ fi
 
 if [ "${#SCRIPTS[@]}" -eq 0 ]; then
   log "nothing to run"
-  printf 'FM_TEST_SUMMARY total=0 failed=0 skipped_gate=0 duration_ms=0\n'
+  printf 'FM_TEST_SUMMARY total=0 failed=0 skipped_gate=0 skipped_checks=0 duration_ms=0\n'
   if [ -n "$JSON_PATH" ]; then
     empty_rec=$(mktemp)
     empty_fam=$(mktemp)
+    empty_skips=$(mktemp)
     : >"$empty_rec"
     : >"$empty_fam"
+    : >"$empty_skips"
     started=$(now_iso)
     mkdir -p "$(dirname "$JSON_PATH")"
-    write_json_artifact "$JSON_PATH" "$started" "$started" "empty" 0 0 0 0 "$SELECTION_DESC" "$empty_rec" "$empty_fam"
-    rm -f "$empty_rec" "$empty_fam"
+    write_json_artifact "$JSON_PATH" "$started" "$started" "empty" 0 0 0 0 0 "$SELECTION_DESC" \
+      "$empty_rec" "$empty_fam" "$empty_skips"
+    rm -f "$empty_rec" "$empty_fam" "$empty_skips"
   fi
   exit 0
 fi
@@ -1146,7 +1206,9 @@ fi
 RUN_TMP=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run.XXXXXX")
 RECORDS="$RUN_TMP/records.tsv"
 FAMILIES_TSV="$RUN_TMP/families.tsv"
+SKIPS_TSV="$RUN_TMP/skips.tsv"
 : >"$RECORDS"
+: >"$SKIPS_TSV"
 trap 'rm -rf "$RUN_TMP"' EXIT
 
 RUN_STARTED_ISO=$(now_iso)
@@ -1155,6 +1217,7 @@ RUN_ID="fm-test-run-${RUN_STARTED_MS}-$$"
 TOTAL=0
 FAILED=0
 SKIPPED_GATE=0
+SKIPPED_CHECKS=0
 AGG_RC=0
 
 # Family accumulators as TSV lines updated in-memory via temp files.
@@ -1190,7 +1253,7 @@ family_bump() {
 
 record_script_result() {
   local script=$1 rc=$2 duration=$3 out=$4 end_iso=$5
-  local base family expected gate_skip fail_delta
+  local base family expected gate_skip fail_delta skipped_checks
   base=$(basename "$script")
   family=$(family_for_basename "$base")
   expected=$(expected_gate_skip_for_family "$family")
@@ -1206,8 +1269,14 @@ record_script_result() {
     SKIPPED_GATE=$((SKIPPED_GATE + 1))
   fi
 
-  printf 'FM_TEST_END %s %s exit=%s duration_ms=%s gate_skip=%s\n' \
-    "$end_iso" "$script" "$rc" "$duration" "$gate_skip"
+  # Individual checks the script declined to run. Recorded whatever the exit
+  # status: a suite that also failed still did not execute them, and folding
+  # that into the failure is how the coverage gap stayed invisible.
+  skipped_checks=$(record_skipped_checks "$script" "$out")
+  SKIPPED_CHECKS=$((SKIPPED_CHECKS + skipped_checks))
+
+  printf 'FM_TEST_END %s %s exit=%s duration_ms=%s gate_skip=%s skipped_checks=%s\n' \
+    "$end_iso" "$script" "$rc" "$duration" "$gate_skip" "$skipped_checks"
 
   fail_delta=0
   if [ "$rc" -ne 0 ]; then
@@ -1216,8 +1285,9 @@ record_script_result() {
     AGG_RC=1
   fi
 
-  printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$script" "$family" "$expected" "$rc" "$duration" "$gate_skip" >>"$RECORDS"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$script" "$family" "$expected" "$rc" "$duration" "$gate_skip" \
+    "$skipped_checks" >>"$RECORDS"
   family_bump "$family" "$duration" "$fail_delta"
   TOTAL=$((TOTAL + 1))
 }
@@ -1373,8 +1443,8 @@ if [ "$RUN_DURATION" -lt 0 ]; then
   RUN_DURATION=0
 fi
 
-printf 'FM_TEST_SUMMARY total=%s failed=%s skipped_gate=%s duration_ms=%s\n' \
-  "$TOTAL" "$FAILED" "$SKIPPED_GATE" "$RUN_DURATION"
+printf 'FM_TEST_SUMMARY total=%s failed=%s skipped_gate=%s skipped_checks=%s duration_ms=%s\n' \
+  "$TOTAL" "$FAILED" "$SKIPPED_GATE" "$SKIPPED_CHECKS" "$RUN_DURATION"
 
 if [ -s "$FAMILIES_TSV" ]; then
   # Stable family summary order by name.
@@ -1384,10 +1454,20 @@ if [ -s "$FAMILIES_TSV" ]; then
   done
 fi
 
+# Name every check that did not run, in the order the run observed them. A
+# green run that skipped something must say what it skipped, otherwise the
+# summary overstates coverage on whatever machine happens to lack a tool.
+if [ -s "$SKIPS_TSV" ]; then
+  while IFS=$'\t' read -r skipped_script skipped_reason; do
+    [ -n "$skipped_script" ] || continue
+    printf 'FM_TEST_SKIPPED script=%s reason=%s\n' "$skipped_script" "$skipped_reason"
+  done <"$SKIPS_TSV"
+fi
+
 # Slowest scripts (top 15) from records.
 if [ -s "$RECORDS" ]; then
   rank=1
-  sort -t$'\t' -k5,5nr "$RECORDS" | head -n 15 | while IFS=$'\t' read -r path _family _expected _rc duration _gate; do
+  sort -t$'\t' -k5,5nr "$RECORDS" | head -n 15 | while IFS=$'\t' read -r path _family _expected _rc duration _gate _skips; do
     printf 'FM_TEST_SLOWEST rank=%s script=%s duration_ms=%s\n' \
       "$rank" "$path" "$duration"
     rank=$((rank + 1))
@@ -1404,8 +1484,8 @@ if [ -n "$JSON_PATH" ]; then
   fi
   write_json_artifact "$JSON_PATH" \
     "$RUN_STARTED_ISO" "$RUN_FINISHED_ISO" "$RUN_ID" \
-    "$TOTAL" "$FAILED" "$SKIPPED_GATE" "$RUN_DURATION" \
-    "$SELECTION_DESC" "$RECORDS" "$FAMILIES_TSV"
+    "$TOTAL" "$FAILED" "$SKIPPED_GATE" "$SKIPPED_CHECKS" "$RUN_DURATION" \
+    "$SELECTION_DESC" "$RECORDS" "$FAMILIES_TSV" "$SKIPS_TSV"
   log "wrote timing artifact: $JSON_PATH"
 fi
 

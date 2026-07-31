@@ -190,13 +190,14 @@ test_empty_selection_emits_summary() {
   printf 'documentation only\n' >"$repo/README.md"
   out=$(cd "$repo" && bin/fm-test-run.sh --changed --base HEAD --json "$tmp/artifacts/timing.json" 2>"$tmp/err") \
     || fail "empty valid changed selection must pass"
-  [ "$out" = "FM_TEST_SUMMARY total=0 failed=0 skipped_gate=0 duration_ms=0" ] \
+  [ "$out" = "FM_TEST_SUMMARY total=0 failed=0 skipped_gate=0 skipped_checks=0 duration_ms=0" ] \
     || fail "empty selection summary is missing or non-deterministic: $out"
   json="$tmp/artifacts/timing.json"
   python3 -c '
 import json, sys
 doc = json.load(open(sys.argv[1]))
-assert doc["summary"] == {"duration_ms": 0, "failed": 0, "skipped_gate": 0, "total": 0}
+assert doc["summary"] == {"duration_ms": 0, "failed": 0, "skipped_checks": 0, "skipped_gate": 0, "total": 0}
+assert doc["skipped_checks"] == []
 assert doc["scripts"] == []
 assert doc["families"] == []
 ' "$json" || { rm -rf "$tmp"; fail "empty selection JSON summary is wrong"; }
@@ -224,12 +225,13 @@ SH
   [ "$end_n" -eq 1 ] || fail "expected one FM_TEST_END, got $end_n"
   grep -Eq '^FM_TEST_BEGIN .+ family=unclassified expected_gate_skip=none$' "$out" \
     || fail "BEGIN line missing family/expected_gate_skip: $(grep '^FM_TEST_BEGIN' "$out")"
-  grep -Eq '^FM_TEST_END .+ exit=0 duration_ms=[0-9]+ gate_skip=false$' "$out" \
+  grep -Eq '^FM_TEST_END .+ exit=0 duration_ms=[0-9]+ gate_skip=false skipped_checks=0$' "$out" \
     || fail "END line missing exit/duration/gate_skip: $(grep '^FM_TEST_END' "$out")"
   summary=$(grep '^FM_TEST_SUMMARY ' "$out" || true)
   assert_contains "$summary" "total=1" "summary total"
   assert_contains "$summary" "failed=0" "summary failed"
   assert_contains "$summary" "skipped_gate=0" "summary skipped_gate"
+  assert_contains "$summary" "skipped_checks=0" "summary skipped_checks"
   grep -q '^FM_TEST_SLOWEST rank=1 ' "$out" \
     || fail "expected FM_TEST_SLOWEST rank=1"
   [ -f "$json" ] || fail "JSON timing artifact was not written"
@@ -297,7 +299,7 @@ SH
   chmod +x "$skip_f"
   "$RUNNER" --json "$json" "$skip_f" >"$out" 2>"$tmp/err.txt" \
     || fail "gate-skip fixture must exit 0 from the runner"
-  grep -Eq '^FM_TEST_END .+ exit=0 duration_ms=[0-9]+ gate_skip=true$' "$out" \
+  grep -Eq '^FM_TEST_END .+ exit=0 duration_ms=[0-9]+ gate_skip=true skipped_checks=0$' "$out" \
     || fail "END must mark gate_skip=true: $(grep '^FM_TEST_END' "$out")"
   grep -q 'FM_TEST_SUMMARY total=1 failed=0 skipped_gate=1' "$out" \
     || fail "summary must count skipped_gate=1: $(grep FM_TEST_SUMMARY "$out")"
@@ -310,6 +312,77 @@ assert doc["summary"]["failed"] == 0
 ' "$json" || { rm -rf "$tmp"; fail "JSON gate_skip accounting is wrong"; }
   rm -rf "$tmp"
   pass "gate-skip accounting is honest and non-failing"
+}
+
+# Regression: a check that could not run used to print "ok - ...", so a machine
+# missing ShellCheck, jq, or zsh produced an all-green run whose summary claimed
+# coverage it never had. Every skip must be counted and named even though the
+# script itself, and the run, stay successful.
+test_skipped_check_accounting() {
+  local tmp mixed out json summary
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-skipped-checks.XXXXXX")
+  mixed="$tmp/mixed.test.sh"
+  out="$tmp/out.txt"
+  json="$tmp/timing.json"
+  cat >"$mixed" <<'SH'
+#!/usr/bin/env bash
+echo "ok - a check that really ran"
+echo "skip - lint check: shellcheck not installed"
+echo "skip - json check: jq not installed"
+exit 0
+SH
+  chmod +x "$mixed"
+  "$RUNNER" --json "$json" "$mixed" >"$out" 2>"$tmp/err.txt" \
+    || { rm -rf "$tmp"; fail "a script reporting skipped checks must still exit 0"; }
+
+  grep -Eq '^FM_TEST_END .+ exit=0 duration_ms=[0-9]+ gate_skip=false skipped_checks=2$' "$out" \
+    || { rm -rf "$tmp"; fail "END must carry skipped_checks=2: $(grep '^FM_TEST_END' "$out")"; }
+  summary=$(grep '^FM_TEST_SUMMARY ' "$out" || true)
+  assert_contains "$summary" "skipped_checks=2" "summary must count both skipped checks"
+  assert_contains "$summary" "failed=0" "a skipped check is not a failure"
+  assert_contains "$summary" "skipped_gate=0" "a per-check skip is not a whole-script gate skip"
+  grep -q 'FM_TEST_SKIPPED script=.*mixed.test.sh reason=lint check: shellcheck not installed' "$out" \
+    || { rm -rf "$tmp"; fail "the run must name the skipped lint check: $(grep FM_TEST_SKIPPED "$out")"; }
+  grep -q 'FM_TEST_SKIPPED script=.*mixed.test.sh reason=json check: jq not installed' "$out" \
+    || { rm -rf "$tmp"; fail "the run must name the skipped json check: $(grep FM_TEST_SKIPPED "$out")"; }
+
+  python3 -c '
+import json, sys
+doc = json.load(open(sys.argv[1]))
+assert doc["summary"]["skipped_checks"] == 2, doc["summary"]
+assert doc["summary"]["failed"] == 0, doc["summary"]
+assert doc["scripts"][0]["skipped_checks"] == 2, doc["scripts"]
+assert doc["scripts"][0]["gate_skip"] is False, doc["scripts"]
+reasons = sorted(r["reason"] for r in doc["skipped_checks"])
+assert reasons == ["json check: jq not installed",
+                   "lint check: shellcheck not installed"], reasons
+' "$json" || { rm -rf "$tmp"; fail "JSON skipped-check accounting is wrong"; }
+  rm -rf "$tmp"
+  pass "skipped checks are counted and named while the run stays green"
+}
+
+# The two skip kinds must not absorb each other: a suite that declines entirely
+# reports skipped_gate, a suite that runs but omits checks reports
+# skipped_checks, and a suite doing both is counted once in each column.
+test_skip_kinds_are_independent() {
+  local tmp both out summary
+  tmp=$(mktemp -d "${TMPDIR:-/tmp}/fm-test-run-skip-kinds.XXXXXX")
+  both="$tmp/both.test.sh"
+  out="$tmp/out.txt"
+  cat >"$both" <<'SH'
+#!/usr/bin/env bash
+echo "skip: herdr not found"
+echo "skip - follow-up check: jq not installed"
+exit 0
+SH
+  chmod +x "$both"
+  "$RUNNER" "$both" >"$out" 2>"$tmp/err.txt" \
+    || { rm -rf "$tmp"; fail "a gate-skipping script must still exit 0"; }
+  summary=$(grep '^FM_TEST_SUMMARY ' "$out" || true)
+  assert_contains "$summary" "skipped_gate=1" "the leading skip: line is still a gate skip"
+  assert_contains "$summary" "skipped_checks=1" "the skip - line is still a per-check skip"
+  rm -rf "$tmp"
+  pass "gate skips and per-check skips are counted independently"
 }
 
 test_fail_on_gate_skip_token() {
@@ -516,7 +589,7 @@ SH
 
   "$runner" --jobs 2 "$d" >"$tmp/out6" 2>"$tmp/err6" \
     || { rm -rf "$tmp"; fail "ordinary parallel stderr gate skip must remain successful"; }
-  grep -Eq '^FM_TEST_END .+ exit=0 duration_ms=[0-9]+ gate_skip=true$' "$tmp/out6" \
+  grep -Eq '^FM_TEST_END .+ exit=0 duration_ms=[0-9]+ gate_skip=true skipped_checks=0$' "$tmp/out6" \
     || { rm -rf "$tmp"; fail "parallel stderr gate skip was not recorded"; }
   grep -q 'FM_TEST_SUMMARY total=1 failed=0 skipped_gate=1' "$tmp/out6" \
     || { rm -rf "$tmp"; fail "parallel stderr skip summary wrong: $(grep FM_TEST_SUMMARY "$tmp/out6")"; }
@@ -576,6 +649,8 @@ test_empty_selection_emits_summary
 test_timing_markers_and_json
 test_aggregate_exit_behavior
 test_gate_skip_accounting
+test_skipped_check_accounting
+test_skip_kinds_are_independent
 test_fail_on_gate_skip_token
 test_exclude_family
 test_portable_shard_union_and_coverage_guard

@@ -1734,7 +1734,7 @@ test_context_registry_rejects_unsafe_reads() {
 test_private_artifact_publisher_runs_under_system_bash() {
   local home out rc
   home="$TMP_ROOT/private-publisher-system-bash"; mkdir -p "$home"
-  [ -x /bin/bash ] || { pass "private artifact publisher compatibility check skipped without /bin/bash"; return 0; }
+  [ -x /bin/bash ] || { skip "private artifact publisher compatibility check: /bin/bash not executable"; return 0; }
   out=$(/bin/bash -c \
     '. "$1/bin/fm-x-lib.sh"; printf "%s\n" "{\"request_id\":\"req-bash\"}" | fmx_private_artifact_publish_stdin "$2/state/x-outbox" req-bash.json 600' \
     _ "$ROOT" "$home"); rc=$?

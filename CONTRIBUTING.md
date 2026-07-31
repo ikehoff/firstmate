@@ -98,6 +98,8 @@ CI owns broad regression across required portable parallel shards, the portable 
 Use `bin/fm-test-run.sh --help` for lane names, `--jobs` rules, and required gate-skip flags when reproducing a lane locally.
 Discover tests by listing `tests/*.test.sh`: each is a self-contained bash script named `<subject>.test.sh`, and its header comment describes what it covers, so pass one to `bin/fm-test-run.sh` to focus on a subject with canonical timing output.
 Tests that need a real optional backend or an explicit opt-in (real herdr/zellij/cmux smoke tests, the live Pi regression) skip themselves and print the tool or environment gate needed to enable them, so the portable suite remains safe on machines without those tools.
+A whole script declines that way by printing `skip: <reason>` as its first line; an individual check inside a script that otherwise runs declines with `tests/lib.sh`'s `skip "<reason>"` reporter, never with `pass`, because a skip reported as `ok - ...` is a false pass that lets a machine missing ShellCheck or jq claim coverage it never had.
+`bin/fm-test-run.sh` counts the two kinds separately as `skipped_gate` and `skipped_checks`, neither is a failure, and it names every skipped check after the summary as `FM_TEST_SKIPPED`.
 The [Herdr backend guide](docs/herdr-backend.md#destructive-lab-safety) owns the lane's isolation boundary, while [runtime backend verification](docs/verification/runtime-backends.md#herdr) owns active empirical evidence; live harness credential tests remain opt-in.
 
 ## Questions

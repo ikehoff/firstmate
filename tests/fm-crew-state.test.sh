@@ -920,7 +920,7 @@ test_no_run_busy_pane() {
 }
 
 test_no_run_herdr_unknown_uses_backend_capture() {
-  command -v jq >/dev/null 2>&1 || { pass "herdr pane fallback skipped without jq"; return; }
+  command -v jq >/dev/null 2>&1 || { skip "herdr pane fallback check: jq not installed"; return; }
   reset_fakes
   local d; d=$(new_case herdr-busy)
   make_repo_on_branch "$d/wt" fm/feat-herdr
@@ -948,7 +948,7 @@ test_no_run_herdr_unknown_uses_backend_capture() {
 # regression pins: crew_pane_is_busy previously returned "not busy" on a bare
 # `idle` verdict without ever looking at the pane.
 test_no_run_herdr_idle_agent_status_corroborated_by_busy_pane() {
-  command -v jq >/dev/null 2>&1 || { pass "herdr idle corroboration skipped without jq"; return; }
+  command -v jq >/dev/null 2>&1 || { skip "herdr idle corroboration check: jq not installed"; return; }
   reset_fakes
   local d; d=$(new_case herdr-idle-busy-pane)
   make_repo_on_branch "$d/wt" fm/feat-herdr-idle
@@ -971,7 +971,7 @@ test_no_run_herdr_idle_agent_status_corroborated_by_busy_pane() {
 # The corroboration must not mask a genuinely idle/human-blocked agent: idle
 # agent_status AND an idle-looking pane (no busy banner) still reads not-busy.
 test_no_run_herdr_idle_agent_status_and_idle_pane_stays_idle() {
-  command -v jq >/dev/null 2>&1 || { pass "herdr idle+idle-pane skipped without jq"; return; }
+  command -v jq >/dev/null 2>&1 || { skip "herdr idle+idle-pane check: jq not installed"; return; }
   reset_fakes
   local d; d=$(new_case herdr-idle-idle-pane)
   make_repo_on_branch "$d/wt" fm/feat-herdr-stopped

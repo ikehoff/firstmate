@@ -651,7 +651,7 @@ SH
   herdrfb=$(make_nudge_herdr_fake "$w/herdr" "$stale" "$fresh")
   toolchain=$(make_fake_toolchain "$w")
   if ! add_real_jq "$toolchain"; then
-    pass "T8b nudge selector herdr respawn skipped without jq"
+    skip "T8b nudge selector herdr respawn check: jq not installed"
     return
   fi
   out=$(PATH="$herdrfb:$toolchain:$BASE_PATH" HERDR_ENV=1 FM_BACKEND=herdr \

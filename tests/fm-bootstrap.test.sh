@@ -963,7 +963,7 @@ test_routine_bootstrap_confirmations_are_silent() {
 
 test_routine_bootstrap_contract_runs_under_system_bash() {
   local out
-  [ -x /bin/bash ] || { pass "bootstrap routine contract skipped without /bin/bash"; return; }
+  [ -x /bin/bash ] || { skip "bootstrap routine contract check: /bin/bash not executable"; return; }
   out=$(run_routine_bootstrap_fixture /bin/bash "$TMP_ROOT/routine-bash")
   [ -z "$out" ] || fail "routine bootstrap contract should be silent under /bin/bash, got: $out"
   pass "bootstrap routine contract runs under system /bin/bash"

@@ -507,7 +507,7 @@ test_backend_source_shell_portable() {
       "zsh: fm_backend_source did not reject bogus with the expected error"
     pass "zsh: fm_backend_source recognizes known backends and rejects unknown ones"
   else
-    pass "zsh: shell-portable backend matching skipped (zsh not found)"
+    skip "zsh shell-portable backend matching check: zsh not installed"
   fi
 
   bash -c "cd '$ROOT' && source bin/fm-backend.sh && fm_backend_source herdr && declare -F fm_backend_herdr_capture >/dev/null" 2>/dev/null \

@@ -5,7 +5,7 @@
 #   # shellcheck source=tests/lib.sh
 #   . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 #
-# It provides the boilerplate every test file used to re-roll: ok/not-ok
+# It provides the boilerplate every test file used to re-roll: ok/not-ok/skip
 # reporters, a self-cleaning temp root, fakebin/PATH-shim helpers, deterministic
 # git identity and fixture builders, state/<id>.meta writers, and the common
 # string/exit-code/file assertions. It deliberately does NOT bundle the
@@ -48,6 +48,24 @@ fail() {
 
 pass() {
   printf 'ok - %s\n' "$1"
+}
+
+# skip <reason> reports a check that could NOT run because this machine lacks
+# something it needs (an absent tool, a foreign OS, a missing interpreter).
+#
+# Use it instead of pass for every environment-conditional bail-out. A skip
+# reported as "ok - ..." is a false pass: the suite goes green while the check
+# never executed, which is exactly how a lint assertion can self-skip on a
+# machine without ShellCheck and still let the run claim full coverage.
+#
+# The marker is "skip - <reason>", deliberately shaped like the ok/not-ok
+# reporters and deliberately NOT "skip:", which bin/fm-test-run.sh reserves for
+# a whole-script gate skip on the first output line. The runner counts these
+# lines per script and reports them as skipped_checks.
+#
+# A skip does not change the script's exit status; the rest of the suite runs.
+skip() {
+  printf 'skip - %s\n' "$1"
 }
 
 # --- self-cleaning temp root ------------------------------------------------

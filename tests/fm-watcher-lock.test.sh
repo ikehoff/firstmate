@@ -947,7 +947,7 @@ SH
       || fail "real ps fallback varied with exported LC_TIME (got '$real_second', want '$real_first')"
     pass "fm_pid_identity real ps fallback is locale-invariant"
   else
-    pass "real ps fallback locale check skipped where ps -o lstart= is unsupported"
+    skip "real ps fallback locale check: ps -o lstart= unsupported on this host"
   fi
   pass "fm_pid_identity is locale-invariant across LC_ALL/LC_TIME"
 }
@@ -995,7 +995,7 @@ test_msys_pid_identity_uses_proc() {
   case "$(uname)" in
     MSYS*|MINGW*|CYGWIN*) ;;
     *)
-      pass "MSYS /proc process identity regression skipped on non-Windows host"
+      skip "MSYS /proc process identity regression check: non-Windows host"
       return
       ;;
   esac
