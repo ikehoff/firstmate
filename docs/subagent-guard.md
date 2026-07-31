@@ -53,7 +53,7 @@ Three exclusions keep the shape test from producing false positives.
   An MCP server chooses its own tool names, a task or agent noun there is common, and it has no bearing on fleet dispatch.
 - `OBSERVE_ONLY_TOOLS`: the exact names `taskoutput`, `taskstop`, `taskget`, `tasklist`, `cronlist`, `bashoutput`, and `killshell` are allowed.
   These observe or stop work that already exists rather than creating it, and denying them at this layer could strand already-running work with no way to inspect or end it.
-  A Claude primary's optional local deny list may still remove them from the schema.
+  The recommended local Claude deny list no longer removes them from the schema either, though a captain may still add them there.
   The shipped guard stays narrower on purpose so it can never be the reason a runaway task cannot be stopped.
 - `PLAN_ONLY_TOOLS`: the exact names `taskcreate` and `taskupdate` are allowed.
   These write, which is why they are a separate list rather than more entries in the observe-or-stop one, but what they write is the harness's session-local todo list.
@@ -85,16 +85,14 @@ Claude primaries should add this deny list in untracked per-home local settings,
       "EnterWorktree",
       "ExitWorktree",
       "CronCreate",
-      "CronDelete",
-      "CronList",
-      "TaskGet",
-      "TaskList",
-      "TaskStop",
-      "TaskOutput"
+      "CronDelete"
     ]
   }
 }
 ```
+
+Read the cost warning below before adopting this list.
+It removes tools the captain may be using for remote control, cloud routines, and log watching.
 
 A denied name is removed from the model's schema entirely.
 The model is never offered the tool, so there is no call to intercept, no matcher to get wrong, no fail-open path, and no dependence on the model's cooperation.
@@ -107,13 +105,34 @@ It is not tracked for two reasons.
 - A tracked `.claude/settings.json` propagates into linked worktrees and disarms legitimate crewmates.
   This was verified when a Claude session in a task worktree of this repo lost its `Agent` tool.
 
-The width of the list remains a captain-owned decision, because denying some of these changes how the captain works with the primary session.
+The width of the list remains a captain-owned decision, because denying any of these changes how the captain works with the primary session.
 Keep it as one flat local array that is reviewable at a glance and narrowable in one line.
-In particular `TaskOutput`, `TaskStop`, `TaskGet`, `TaskList`, and `CronList` only observe or stop work that already exists, yet the recommended local deny list still removes all five by default.
-The hook deliberately allows those five, so the shipped guard can never strand a runaway task with no way to inspect or end it, and it allows `TaskCreate` and `TaskUpdate` too, so it can never be the reason the primary cannot track its own plan.
-The two session-local todo tools are no longer recommended for local denial at all, because they write only the harness's session-local todo list, which has no executor and spawns nothing, so removing them from the schema removes no delegation power.
-Denying them there would instead reproduce at a stronger layer the exact false positive the shipped guard now avoids, leaving anyone who adopts this list verbatim unable to let a primary track its own plan.
-Narrowing the list further, including the five observe-or-stop names, is the captain's call, and this local list is the only layer that can remove a todo tool from the primary's schema.
+
+The recommended list is now exactly the names the shipped guard also denies, so the two layers agree and the local list is pure defence in depth.
+`TaskOutput`, `TaskStop`, `TaskGet`, `TaskList`, and `CronList` were dropped from it, because those five only observe or stop work that already exists and the hook deliberately allows all five so the guard can never strand a runaway task with no way to inspect or end it.
+`TaskCreate` and `TaskUpdate` were dropped earlier for the same reason: they write only the harness's session-local todo list, which has no executor and spawns nothing, so removing them from the schema removes no delegation power and instead reproduces at a stronger layer the exact false positive the shipped guard now avoids.
+Denying any of those seven locally is still available to a captain who wants it, and this local list is the only layer that can remove them from the primary's schema, but it subtracts capability the guard was never designed to remove.
+
+### What the local list costs
+
+Schema removal is what makes this list strong, and it is also what makes it expensive, because the cost lands on the captain rather than on delegation.
+Only `Task`, `Agent`, `Workflow`, `EnterWorktree`, `ExitWorktree`, and `CronCreate` start work or a workspace the fleet would not know about, which is the event this guard exists to stop.
+The other ten names originally recommended here are the captain's remote-control, cloud-routine, and observation surface.
+`RemoteTrigger` is the claude.ai remote-trigger API for scheduled routines, `CronDelete` and `CronList` retire and list those routines, `Monitor` streams events from a long-running local command, `SendMessage` talks to an existing teammate agent, `ScheduleWakeup` paces a self-scheduling loop, and `TaskGet`, `TaskList`, `TaskStop`, and `TaskOutput` inspect or end work that is already running.
+
+This was observed live on 2026-07-28: with the sixteen-name list in local settings, the primary's remote-control and cloud-agent tools were absent from its schema and the captain could not drive the session remotely.
+Removing the entries restored the tools immediately, with no session restart.
+That recovery path is the important operational fact, because a captain who adopts this list and then loses remote control can undo it in one edit.
+
+Narrowing the list is necessary but not always sufficient, and the difference is worth knowing before editing.
+
+- `CronList`, `TaskGet`, `TaskList`, `TaskStop`, and `TaskOutput` are allowed by the shipped hook, so removing them from the local list makes them usable again, not merely visible.
+  This is why the recommendation above no longer denies them, and `TaskCreate` and `TaskUpdate` are allowed by the hook on the same footing.
+- `Task`, `Agent`, `Workflow`, `RemoteTrigger`, `Monitor`, `ScheduleWakeup`, `SendMessage`, `EnterWorktree`, `ExitWorktree`, `CronCreate`, and `CronDelete` are delegation-shaped, so in a primary home the shipped hook denies the call even after the local entry is gone.
+  Narrowing the local list returns the name to the schema but not to use, and launching with `FM_ALLOW_SUBAGENT=1` is what makes a deliberate call succeed.
+
+Both verdicts are recorded in the validation record below.
+A captain who wants remote control or cloud routines in the primary home therefore needs both changes, and the shipped guard remains the layer that decides whether the call runs.
 
 `permissions.allow` is a pre-approval list, not an availability list, so there is no fail-closed positive allowlist available.
 That is why any fixed deny list is fail-open against future tools and why the shape-based guard still exists.
@@ -180,7 +199,7 @@ Applicability turns on one question: does the harness expose built-in delegation
 
 | Harness | Delegation surface | Status |
 | --- | --- | --- |
-| Claude | 16 known tools, listed above | Scoped guard wired and live-verified; untracked local deny list verified and recommended. |
+| Claude | 18 known delegation, scheduling, worktree, and task-tracking tools, classified above; 11 denied and 7 excluded | Scoped guard wired and live-verified; untracked local deny list verified and recommended at its narrowed 11-name width. |
 | Codex | none | Not applicable, verified empirically below. Codex 0.144.1 exposes no subagent, sub-task, or delegated-agent tool, so there is nothing to remove or intercept. `.codex/hooks.json` is unchanged. |
 | Grok | present, exact tokens unconfirmed | Not wired pending live verification. See below. |
 | OpenCode | present, exact tokens unconfirmed | Not wired pending live verification. See below. |
@@ -295,7 +314,8 @@ This distinction matters when reading the next result: a tool absent from a plai
 ### Local deny-list hardening
 
 Run in a scratch firstmate-shaped project containing `AGENTS.md`, `state/`, a full copy of `bin/`, and a Claude settings file containing the local deny list exactly as recommended on that date, which was the 18-name form that still included `TaskCreate` and `TaskUpdate`.
-The result validates that local deny list rather than tracked repo state, and the recommendation above has since dropped those two session-local todo tools.
+The result validates that local deny list rather than tracked repo state, and it remains the evidence that a denied name is removed from the schema.
+The recommendation above has since narrowed to 11 names, dropping the two session-local todo tools and the five observe-or-stop tools the shipped hook allows.
 Asking for deferred entries explicitly returned:
 
 ```text
@@ -349,6 +369,48 @@ Result: the Workflow tool call was NOT blocked by a hook. It launched and ran to
 A Claude deny is honored only when the hook's stdout is empty.
 `tests/fm-subagent-pretool-check.test.sh` asserts stdout is empty on every `--claude` deny and that default mode still emits the Grok object on stdout.
 The live consequence is confirmed by the shipped-guard result above: Claude honored the deny and reported the reason text.
+
+## Per-name hook verdicts, 2026-07-30
+
+This is the evidence behind the narrowed recommendation and the cost warning above: which of the originally recommended names the shipped guard denies on its own, and which it allows.
+The checker was run directly against a scratch primary-shaped home so no live fleet state was touched.
+
+```sh
+T=$(mktemp -d); mkdir -p "$T/bin" "$T/state"; printf '# fixture\n' > "$T/AGENTS.md"; git -C "$T" init -q
+for t in Task Agent Workflow RemoteTrigger Monitor ScheduleWakeup SendMessage EnterWorktree \
+         ExitWorktree CronCreate CronDelete CronList TaskCreate TaskUpdate TaskGet TaskList \
+         TaskStop TaskOutput; do
+  rc=0
+  env FM_ROOT_OVERRIDE="$T" FM_HOME="$T" FM_STATE_OVERRIDE="$T/state" \
+    bin/fm-subagent-pretool-check.sh --claude --tool "$t" >/dev/null 2>&1 || rc=$?
+  printf '%-16s %s\n' "$t" "$([ "$rc" -eq 0 ] && echo ALLOW || echo "DENY(rc=$rc)")"
+done
+```
+
+```text
+Task             DENY(rc=2)
+Agent            DENY(rc=2)
+Workflow         DENY(rc=2)
+RemoteTrigger    DENY(rc=2)
+Monitor          DENY(rc=2)
+ScheduleWakeup   DENY(rc=2)
+SendMessage      DENY(rc=2)
+EnterWorktree    DENY(rc=2)
+ExitWorktree     DENY(rc=2)
+CronCreate       DENY(rc=2)
+CronDelete       DENY(rc=2)
+CronList         ALLOW
+TaskCreate       ALLOW
+TaskUpdate       ALLOW
+TaskGet          ALLOW
+TaskList         ALLOW
+TaskStop         ALLOW
+TaskOutput       ALLOW
+```
+
+Two current guarantees rest on this split.
+The eleven denied names are the recommended local deny list exactly, so that list adds schema removal on top of the hook and never denies something the hook would allow.
+The seven allowed names are the observe-or-stop and plan-only exclusions, so a local entry for any of them is the only thing that would remove it, and dropping it from the recommendation restores it to use rather than merely to the schema.
 
 ## Automated validation
 

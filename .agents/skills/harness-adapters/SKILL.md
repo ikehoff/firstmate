@@ -79,6 +79,7 @@ The shipped mechanism is `bin/fm-subagent-pretool-check.sh`, a primary-home PreT
 Claude primaries should also use an untracked per-home local `permissions.deny` list as hardening for known Claude delegation tools, because it removes them from the model's schema so they are never offered.
 That deny list must not ship in tracked `.claude/settings.json` because it is Claude-only rather than harness-agnostic, and because tracked project settings propagate into linked worktrees where they disarm legitimate crewmates.
 `docs/subagent-guard.md` owns the full contract, the local deny-list recommendation, the `FM_ALLOW_SUBAGENT=1` escape hatch, and the per-harness applicability review.
+Read its cost warning before recommending that list to a captain: a wider form removes the captain's remote-control, cloud-routine, and observation tools from the schema, which was observed to break remote control of the primary session.
 
 Two verified facts worth pinning here.
 The subagent tool presents to the model as `Agent`, and on Claude Code 2.1.217 both `Agent` and `Task` work as `permissions.deny` keys, verified by an A/B with a nonsense-name control.
