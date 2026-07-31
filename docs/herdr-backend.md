@@ -31,6 +31,37 @@ The required CI lane uses the pinned installers in `bin/fm-install-herdr.sh` and
 Those script headers own release assets, checksums, download bounds, and post-install gates.
 Real harness credential tests remain opt-in rather than part of default CI.
 
+## Outbound network behavior
+
+Herdr sends no usage analytics.
+It carries no analytics vendor, no event collector, and no environment variable of the `*_TELEMETRY` opt-out shape, because there is nothing for one to disable.
+
+A running Herdr server does start two background checks, and both are on by default:
+
+- The Herdr version check reads `https://herdr.dev/latest.json`, or `preview.json` on the preview channel.
+- The agent-detection manifest check reads `https://herdr.dev/agent-detection/index.toml`.
+
+Both are plain GETs of static files at hardcoded URLs with no query string, so they disclose only what any plain HTTP request discloses, the machine's address and the timing, and nothing about the session, its panes, its agents, or the repositories they work in.
+Product announcements arrive inside the version manifest rather than as their own request, so turning off the version check turns those off with it.
+A Homebrew-installed Herdr additionally reads `https://formulae.brew.sh/api/formula/herdr.json` while resolving an update, which does not apply to the direct binary that `bin/fm-install-herdr.sh` installs.
+
+Turn either check off in Herdr's own `config.toml`, at `$XDG_CONFIG_HOME/herdr/config.toml` or `~/.config/herdr/config.toml`:
+
+```toml
+[update]
+version_check = false
+manifest_check = false
+```
+
+Firstmate never writes that file.
+Disabling the version check costs the automatic notice that a new Herdr release exists; `herdr update` still works when invoked directly, and `bin/fm-install-herdr.sh` still installs the pinned build either way.
+Disabling the manifest check freezes agent detection at the manifest the installed build ships.
+
+Verified 2026-07-31 against Herdr 0.7.5.
+Two isolated servers were run under a throwaway `XDG_CONFIG_HOME`, with `HERDR_AGENT_DETECTION_MANIFEST_CATALOG_URL` pointed at a local capture listener so no manifest request left the machine.
+With both keys `true` the server logged `event="update.check.start"` at startup and the listener recorded `GET /agent-detection/index.toml`; with both keys `false` the same window produced no update-check log line and no request at all.
+A symbol and string sweep of the same binary independently found the two `herdr.dev` endpoints above and the Homebrew formula URL to be its only non-local hosts.
+
 ## Watching and task containers
 
 The ordinary topology puts one task tab per endpoint in the exact workspace of the Firstmate or secondmate that launches it.
