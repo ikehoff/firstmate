@@ -13,6 +13,12 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 fail() { printf 'not ok - %s\n' "$1" >&2; cleanup_all; exit 1; }
 pass() { printf 'ok - %s\n' "$1"; }
 
+# Render invisible bytes (the whole point of these fixtures is padding you cannot
+# see) in the same `M-bM-^]M-/M-BM- ` notation the fixture comments and
+# docs/verification/supervision.md quote. `-ve` rather than GNU-only `-A`, so the
+# dump still works on the BSD cat that ships with macOS.
+show_bytes() { cat -ve; }
+
 wait_for_capture_text() {  # <target> <text> [samples]
   local target=$1 text=$2 samples=${3:-100} out i=0
   while [ "$i" -lt "$samples" ]; do
@@ -220,10 +226,10 @@ composer_state_is() {
     "cat '$SHIM_DIR/composer-row.bin'; sleep 300" \
     || fail "could not create the composer fixture window"
   wait_for_composer_render "$want_cy" "$rendered" \
-    || fail "the composer fixture ($label) never rendered: expected cursor row $want_cy and bytes"$'\n'"$(printf '%s' "$rendered" | cat -A)"$'\n'"but the pane showed cursor row '${RENDER_CY:-<unreadable>}' and"$'\n'"$(printf '%s' "$RENDER_SEEN" | cat -A)"
+    || fail "the composer fixture ($label) never rendered: expected cursor row $want_cy and bytes"$'\n'"$(printf '%s' "$rendered" | show_bytes)"$'\n'"but the pane showed cursor row '${RENDER_CY:-<unreadable>}' and"$'\n'"$(printf '%s' "$RENDER_SEEN" | show_bytes)"
   got=$(fm_tmux_composer_state "$COMPOSER_TARGET")
   [ "$got" = "$want" ] \
-    || fail "real tmux composer row ($label) read '$got', expected '$want'"$'\n'"$(printf '%s' "$RENDER_SEEN" | cat -A)"
+    || fail "real tmux composer row ($label) read '$got', expected '$want'"$'\n'"$(printf '%s' "$RENDER_SEEN" | show_bytes)"
 }
 
 # The exact observed empty row: agent glyph + U+00A0, styled as claude emits it.

@@ -130,7 +130,9 @@ fm_tmux_composer_row_state() {  # <raw-row> [bordered] [allow-busy] -> empty|pen
   # since claude pads its empty composer row with a U+00A0 no-break space that no
   # locale's [:space:] class matches.
   plain=$(printf '%s\n' "$raw" | fm_composer_strip_ansi)
-  stripped=$(fm_composer_trim_ws "$(printf '%s\n' "$raw" | fm_composer_strip_ghost)")
+  stripped=$(printf '%s\n' "$raw" | fm_composer_strip_ghost)
+  fm_composer_trim_ws_var "$stripped"
+  stripped=$FM_COMPOSER_TRIMMED
   case "$stripped" in
     '│'*'│') stripped=${stripped#│}; stripped=${stripped%│} ;;
     '┃'*'┃') stripped=${stripped#┃}; stripped=${stripped%┃} ;;

@@ -476,7 +476,7 @@ test_nbsp_padded_composer_reads_empty() {
     out=$(PATH="$fb:$PATH" FM_FAKE_STYLED="$capture" FM_FAKE_CY="$cy" \
       fm_tmux_composer_state "fakepane")
     [ "$out" = "$want" ] \
-      || fail "U+00A0-padded composer '$fixture' should be $want, got '$out'"$'\n'"$(cat -A "$capture")"
+      || fail "U+00A0-padded composer '$fixture' should be $want, got '$out'"$'\n'"$(cat -ve "$capture")"
   done
   pass "fm_tmux_composer_state: U+00A0 padding reads empty through both the box geometry and the content classifier"
 }
