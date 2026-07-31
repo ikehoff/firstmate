@@ -730,6 +730,40 @@ EOF
   pass "cross-branch attribution picks the branch's most recent row"
 }
 
+# A branch's own run is superseded the moment a NEWER run for the same branch
+# exists, whatever the newer run's head binds to. Regression coverage for the
+# 2026-07-30 stale-failed reading: a failed run was superseded by a fresh one,
+# the fresh run's head lived only in the pipeline's own copy (not yet an object
+# in this worktree), so the newest row was skipped as unbindable and the OLD
+# failed row - still sitting exactly on the worktree head - was reported as the
+# crew's current state. A false `failed` is the costly misread here: it invites
+# teardown of a crew whose validation is in fact healthy.
+test_superseded_failed_row_not_attributed_under_newer_run() {
+  reset_fakes
+  local d short; d=$(new_case superseded-failed)
+  make_repo_on_branch "$d/wt" fm/feat-superseded
+  short=$(git -C "$d/wt" rev-parse --short=7 HEAD)
+  make_fakebin "$d" >/dev/null
+  fm_write_meta "$d/state/superseded.meta" "window=fm:fm-superseded" "worktree=$d/wt" "kind=ship"
+  printf 'working: fresh validation run under way\n' > "$d/state/superseded.status"
+  FM_FAKE_AXI_STATUS="$(run_running fm/other-crew)"
+  # Newest row: the live run, advanced by the pipeline to a commit this worktree
+  # has no object for. Older row: the superseded failed run, still exactly on the
+  # worktree head.
+  FM_FAKE_RUNS_LIST="$(cat <<EOF
+  running    fm/other-crew aaaaaaa  2026-07-30 22:10
+  running    fm/feat-superseded ccccccc  2026-07-30 21:50
+  failed     fm/feat-superseded ${short}  2026-07-30 20:00
+EOF
+)"
+  FM_FAKE_BUSY=0
+  local out; out=$(run_crew_state "$d" superseded)
+  assert_not_contains "$out" "state: failed" "superseded failed run must not be reported as current state"
+  assert_not_contains "$out" "source: run-step" "no bindable run for this branch -> no run-step attribution"
+  assert_contains "$out" "source: status-log" "falls back to current-state sources instead"
+  pass "a superseded failed row is not attributed under a newer same-branch run"
+}
+
 test_coarse_run_does_not_probe_other_branch_ci_log_for_ready_status() {
   reset_fakes
   local d short; d=$(new_case coarse-ready-other-log)
@@ -1254,6 +1288,7 @@ test_terminal_passed
 test_terminal_failed
 test_cross_branch_attribution_via_runs_list
 test_cross_branch_attribution_picks_most_recent_row
+test_superseded_failed_row_not_attributed_under_newer_run
 test_coarse_run_does_not_probe_other_branch_ci_log_for_ready_status
 test_other_branch_run_ignored
 test_no_run_busy_pane

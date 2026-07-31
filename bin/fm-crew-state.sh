@@ -27,7 +27,9 @@
 #      A run matches when its head equals the worktree HEAD, or the worktree HEAD
 #      is an ancestor of the run head (pipeline fix commits advanced the run on
 #      the same line of history). Local work that advanced past the run head, or
-#      diverged from it, invalidates attribution.
+#      diverged from it, invalidates attribution. Only a branch's NEWEST run can
+#      be attributed: an older one has been superseded, and its outcome - most
+#      damagingly a `failed` - is history rather than current state.
 #      The run-step is AUTHORITATIVE: running/fixing -> working, ci -> working,
 #      awaiting_approval/fix_review -> parked (with gate findings), terminal
 #      passed/checks-passed -> done, failed/cancelled -> failed. EXCEPT: while
@@ -375,9 +377,11 @@ nm_ci_checks_state() {
 # "<status> <branch> <short-sha> <date> [<pr-url>]" separated by runs of
 # spaces (verified: no quoting, so splitting on the first two whitespace runs
 # is exact) - but branch + coarse status is exactly what this predicate needs:
-# is a run for THIS branch active right now. Echoes the first (most recent)
-# matching row's status word (running/completed/cancelled/failed), or empty
-# when the branch has no run within FM_CREW_STATE_RUNS_LIMIT rows.
+# is a run for THIS branch active right now. Echoes the newest same-branch
+# row's status word (running/completed/cancelled/failed), or empty when the
+# branch has no run within FM_CREW_STATE_RUNS_LIMIT rows OR its newest run does
+# not bind to this worktree's code identity - an older run for the same branch
+# has been superseded and never answers for the crew's current state.
 nm_runs_status_for_branch() {  # <branch>
   local branch=$1 out row st rest br sha
   out=$(nm_run runs --limit "$FM_CREW_STATE_RUNS_LIMIT")
@@ -393,10 +397,21 @@ nm_runs_status_for_branch() {  # <branch>
     rest=$(trim "$rest")
     sha=${rest%% *}
     if [ "$br" = "$branch" ]; then
-      # Same code-identity rule as axi status: skip a same-branch row whose
-      # short-sha does not match this worktree (rewritten or advanced tip).
+      # Same code-identity rule as axi status: a same-branch row whose short-sha
+      # does not bind to this worktree (rewritten or advanced tip, or a head this
+      # worktree has no object for) is not attributable.
+      #
+      # Stop there rather than scanning older rows for this branch. The list is
+      # newest-first, so any further same-branch row is a run this one already
+      # SUPERSEDED, and a superseded run's outcome is not the crew's current
+      # state. Scanning on produced the 2026-07-30 stale-`failed` misread: a
+      # failed run was superseded by a fresh one, the fresh run's head lived only
+      # in the pipeline's own copy so its row was skipped as unbindable, and the
+      # old failed row - still sitting exactly on the worktree head - was
+      # reported as current. Reporting nothing here falls through to the
+      # pane/status-log sources, which is the designed conservative answer.
       if ! nm_coarse_head_matches_worktree "$sha"; then
-        continue
+        return 0
       fi
       printf '%s' "$st"
       return 0
