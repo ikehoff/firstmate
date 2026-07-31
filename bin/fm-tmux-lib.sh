@@ -122,20 +122,19 @@ fm_tmux_strip_ghost() { fm_composer_strip_ghost; }
 # and may recognize a busy footer.
 fm_tmux_composer_row_state() {  # <raw-row> [bordered] [allow-busy] -> empty|pending|unknown
   local raw=$1 bordered=${2:-0} allow_busy=${3:-1} plain stripped
-  plain=$(printf '%s\n' "$raw" | fm_composer_strip_ansi)
-  plain="${plain#"${plain%%[![:space:]]*}"}"
-  plain="${plain%"${plain##*[![:space:]]}"}"
-  stripped=$(printf '%s\n' "$raw" | fm_composer_strip_ghost)
-  stripped="${stripped#"${stripped%%[![:space:]]*}"}"
-  stripped="${stripped%"${stripped##*[![:space:]]}"}"
+  # Trim through the shared fm_composer_trim_ws (bin/fm-composer-lib.sh) rather
+  # than a local ASCII-only idiom: claude pads its empty composer row with a
+  # U+00A0 no-break space, which no locale's [:space:] class matches, so a local
+  # trim would leave padding attached to the border or the prompt glyph.
+  plain=$(fm_composer_trim_ws "$(printf '%s\n' "$raw" | fm_composer_strip_ansi)")
+  stripped=$(fm_composer_trim_ws "$(printf '%s\n' "$raw" | fm_composer_strip_ghost)")
   case "$stripped" in
     '│'*'│') stripped=${stripped#│}; stripped=${stripped%│} ;;
     '┃'*'┃') stripped=${stripped#┃}; stripped=${stripped%┃} ;;
     '║'*'║') stripped=${stripped#║}; stripped=${stripped%║} ;;
     '|'*'|') stripped=${stripped#|}; stripped=${stripped%|} ;;
   esac
-  stripped="${stripped#"${stripped%%[![:space:]]*}"}"
-  stripped="${stripped%"${stripped##*[![:space:]]}"}"
+  stripped=$(fm_composer_trim_ws "$stripped")
   if [ "$allow_busy" = 1 ] && [ -n "$stripped" ] \
      && printf '%s' "$stripped" | grep -qiE "${FM_BUSY_REGEX:-$FM_TMUX_BUSY_REGEX_DEFAULT}"; then
     printf 'empty'; return 0
@@ -144,9 +143,11 @@ fm_tmux_composer_row_state() {  # <raw-row> [bordered] [allow-busy] -> empty|pen
 }
 
 fm_tmux_row_has_composer_edge() {  # <plain-row>
-  local row=$1
-  row="${row#"${row%%[![:space:]]*}"}"
-  row="${row%"${row##*[![:space:]]}"}"
+  local row
+  # Shared padding trim, fork-free: this runs once per pane row, and harness
+  # padding outside a border must not hide the edge glyph from this scan.
+  fm_composer_trim_ws_var "$1"
+  row=$FM_COMPOSER_TRIMMED
   case "$row" in
     '│'*|*'│'|'┃'*|*'┃'|'║'*|*'║'|'╭'*|*'╭'|'╮'*|*'╮'|\
     '┌'*|*'┌'|'┐'*|*'┐'|'╔'*|*'╔'|'╗'*|*'╗'|'┏'*|*'┏'|'┓'*|*'┓'|\
@@ -159,8 +160,16 @@ fm_tmux_row_has_composer_edge() {  # <plain-row>
 }
 
 fm_tmux_composer_geometry_spaces() {  # <content-inner> -> spaces
-  local content=$1 probe
-  probe="${content#"${content%%[![:space:]]*}"}"
+  local content probe
+  # Normalize harness padding to plain spaces FIRST, so a genuinely blank box
+  # interior that claude padded with U+00A0 still measures as blank. Without
+  # this the [![:space:]] test below rejects it, the box reads geometrically
+  # ambiguous, and the composer verdict degrades to unknown - the same
+  # fm-composer-nbsp wedge, one layer up from the content classifier.
+  fm_composer_pad_to_space_var "$1"
+  content=$FM_COMPOSER_PADDED
+  fm_composer_trim_ws_var "$content"
+  probe=$FM_COMPOSER_TRIMMED
   case "$probe" in
     '>'*) content=${content/>/ } ;;
     '❯'*) content=${content/❯/ } ;;
@@ -178,15 +187,19 @@ fm_tmux_composer_geometry_spaces() {  # <content-inner> -> spaces
 # geometry is ambiguous. The cursor may be on any content row or on the bottom
 # border; no fixed cursor offset is used.
 fm_tmux_find_composer_box() {  # <cursor-y> <plain-visible-pane> -> "<top> <bottom> <ambiguous>"
-  local cy=$1 pane=$2 line indent left_stripped trimmed kind family current_family=
+  local cy=$1 pane=$2 line indent trimmed kind family current_family=
   local side_family top_inner top_spaces='' geometry_check=0 geometry_ambiguous=0
   local content_inner content_spaces bottom_inner bottom_spaces
   local current_indent=
   local row=0 top=-1 valid=0 content_rows=0 unsafe=0 cursor_structural=0
   while IFS= read -r line; do
+    # indent stays an ASCII measurement: it is compared between the top, side and
+    # bottom rows of the same box, so it measures columns rather than deciding
+    # emptiness. trimmed is a real trim and uses the shared padding class, so a
+    # border padded with non-ASCII whitespace is still recognized as a border.
     indent=${line%%[![:space:]]*}
-    left_stripped="${line#"${line%%[![:space:]]*}"}"
-    trimmed="${left_stripped%"${left_stripped##*[![:space:]]}"}"
+    fm_composer_trim_ws_var "$line"
+    trimmed=$FM_COMPOSER_TRIMMED
     kind=
     family=
     case "$trimmed" in
@@ -214,7 +227,11 @@ fm_tmux_find_composer_box() {  # <cursor-y> <plain-visible-pane> -> "<top> <bott
       content_rows=0
       geometry_ambiguous=0
       geometry_check=1
-      top_inner=$trimmed
+      # Normalize harness padding to spaces before measuring, on the same footing
+      # as the content rows in fm_tmux_composer_geometry_spaces, so the three
+      # width signatures stay comparable.
+      fm_composer_pad_to_space_var "$trimmed"
+      top_inner=$FM_COMPOSER_PADDED
       case "$family" in
         rounded) top_inner=${top_inner#╭}; top_inner=${top_inner%╮}; top_spaces=${top_inner//─/ } ;;
         light) top_inner=${top_inner#┌}; top_inner=${top_inner%┐}; top_spaces=${top_inner//─/ } ;;
@@ -231,7 +248,8 @@ fm_tmux_find_composer_box() {  # <cursor-y> <plain-visible-pane> -> "<top> <bott
          && [ "$top" -lt "$cy" ] && [ "$cy" -le "$row" ]; then
         [ "$indent" = "$current_indent" ] || geometry_ambiguous=1
         if [ "$geometry_check" = 1 ]; then
-          bottom_inner=$trimmed
+          fm_composer_pad_to_space_var "$trimmed"
+          bottom_inner=$FM_COMPOSER_PADDED
           case "$family" in
             rounded) bottom_inner=${bottom_inner#╰}; bottom_inner=${bottom_inner%╯}; bottom_spaces=${bottom_inner//─/ } ;;
             light) bottom_inner=${bottom_inner#└}; bottom_inner=${bottom_inner%┘}; bottom_spaces=${bottom_inner//─/ } ;;

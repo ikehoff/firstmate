@@ -547,8 +547,9 @@ fm_backend_cmux_composer_state() {  # <target> [expected-label] -> empty|pending
   local target=$1 expected_label=${2:-} cap line trimmed stripped="" found=0
   cap=$(fm_backend_cmux_capture "$target" "$FM_BACKEND_CMUX_COMPOSER_LINES" "$expected_label") || { printf 'unknown'; return 0; }
   while IFS= read -r line; do
-    trimmed="${line#"${line%%[![:space:]]*}"}"
-    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    # Fork-free trim form: this scans up to FM_BACKEND_CMUX_COMPOSER_LINES rows.
+    fm_composer_trim_ws_var "$line"
+    trimmed=$FM_COMPOSER_TRIMMED
     [ -n "$trimmed" ] || continue
     case "$trimmed" in
       '│'*'│'|'┃'*'┃'|'|'*'|') : ;;
@@ -561,8 +562,9 @@ fm_backend_cmux_composer_state() {  # <target> [expected-label] -> empty|pending
   stripped=${stripped//│/}
   stripped=${stripped//┃/}
   stripped=${stripped//|/}
-  stripped="${stripped#"${stripped%%[![:space:]]*}"}"
-  stripped="${stripped%"${stripped##*[![:space:]]}"}"
+  # Shared trim (bin/fm-composer-lib.sh): non-ASCII harness padding must not
+  # survive as false content.
+  stripped=$(fm_composer_trim_ws "$stripped")
   # A row was found only by the bordered shape above, so content came from a
   # genuine composer box - delegate to the shared owner with bordered=1. A bare
   # dead-shell prompt has no bordered row and already returned 'unknown' above.

@@ -144,6 +144,69 @@ case "$large" in
 esac
 pass "real tmux: fm_backend_tmux_capture's -S -N bound trims old history for a small window and reaches it for a large one"
 
+# --- composer emptiness against a REAL rendered pane (task fm-composer-nbsp) --
+#
+# Claude Code 2.1.220 renders its empty composer as the agent prompt glyph `❯`
+# followed by U+00A0 NO-BREAK SPACE, not an ASCII space. Captured from three
+# live panes with `tmux capture-pane -p -t <pane> | cat -A`, which showed the
+# composer row as the bytes `M-bM-^]M-/M-BM- ` (E2 9D AF C2 A0). Every fixture
+# below is built from those exact bytes rather than a hand-typed approximation,
+# because the whole defect was that a hand-typed ASCII space passed while what
+# the harness actually renders did not.
+#
+# This runs against a real tmux pane on purpose: bin/fm-send.sh and the away-mode
+# escalation injector both act on fm_tmux_composer_state's verdict, and the
+# padding survived every ASCII-only unit fixture the suite had.
+COMPOSER_WINDOW="fm-smoke-composer"
+COMPOSER_TARGET="$SESSION:$COMPOSER_WINDOW"
+NBSP=$'\xc2\xa0'
+
+# composer_state_is <label> <row-bytes> <expected> - render <row-bytes> as the
+# only content of a fresh pane and hold the cursor on that row with a sleep, so
+# the reader sees a settled composer row exactly as it would on a live agent.
+composer_state_is() {
+  local label=$1 row=$2 want=$3 got='' i=0
+  printf '%s' "$row" > "$SHIM_DIR/composer-row.bin"
+  tmux kill-window -t "$COMPOSER_TARGET" 2>/dev/null || true
+  tmux new-window -d -t "$SESSION" -n "$COMPOSER_WINDOW" \
+    "cat '$SHIM_DIR/composer-row.bin'; sleep 300" \
+    || fail "could not create the composer fixture window"
+  # The pane's command needs a beat to draw; poll rather than fixing a sleep.
+  while [ "$i" -lt 100 ]; do
+    got=$(fm_tmux_composer_state "$COMPOSER_TARGET")
+    [ "$got" = "$want" ] && break
+    sleep 0.1
+    i=$((i + 1))
+  done
+  [ "$got" = "$want" ] \
+    || fail "real tmux composer row ($label) read '$got', expected '$want'"
+}
+
+# The exact observed empty row: agent glyph + U+00A0, styled as claude emits it.
+composer_state_is "claude empty composer: ❯ + U+00A0" $'\033[39m❯'"$NBSP" empty
+# The codex agent glyph with the same padding.
+composer_state_is "codex empty composer: › + U+00A0" $'\033[39m›'"$NBSP" empty
+# Real typed text must still defer, including text that CONTAINS a no-break
+# space - the trim is leading/trailing only, never a content-stripping pass.
+composer_state_is "typed text after the glyph" $'\033[39m❯ fix findings 1 and 3' pending
+composer_state_is "typed text containing U+00A0" $'\033[39m❯ hello'"$NBSP"'world' pending
+composer_state_is "typed text right after U+00A0" $'\033[39m❯'"$NBSP"'hello' pending
+# The dead-shell safety boundary is unchanged by the wider trim.
+composer_state_is "bare dead-shell prompt" '$' unknown
+
+# A BORDERED composer padded the same way. This is a second, independent layer:
+# the box geometry check measures whether a content row's interior is blank, and
+# an ASCII-only test there rejects a U+00A0-padded interior, marks the geometry
+# ambiguous, and degrades the verdict to `unknown` even once the content
+# classifier is correct. `\033[2A` parks the cursor back on the content row so
+# the reader sees the same structure a live agent shows.
+BOX_EMPTY="╭────────────╮"$'\n'"│ ❯$NBSP         │"$'\n'"╰────────────╯"$'\n'$'\033[2A'
+BOX_TEXT="╭────────────╮"$'\n'"│ ❯ ship it  │"$'\n'"╰────────────╯"$'\n'$'\033[2A'
+composer_state_is "bordered composer: ❯ + U+00A0" "$BOX_EMPTY" empty
+composer_state_is "bordered composer with text" "$BOX_TEXT" pending
+tmux kill-window -t "$COMPOSER_TARGET" 2>/dev/null || true
+pass "real tmux: a composer padded with U+00A0 reads empty, while real typed text (even containing U+00A0) stays pending"
+
 # --- resolve_bare_selector (live-window-listing) -----------------------------
 
 resolved=$(fm_backend_tmux_resolve_bare_selector "$WINDOW") \
