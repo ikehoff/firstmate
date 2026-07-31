@@ -24,6 +24,9 @@ make_fake_toolchain() {
   # the real pinned build usually sits outside the system PATH this suite pins, so
   # the stub keeps every "stay quiet" case about the budget rather than the lint gate.
   fm_fake_shellcheck "$fakebin"
+  # Same reasoning for the browser: bootstrap reports an absent Google Chrome, and
+  # whether the developer's machine has one is not this suite's subject.
+  fm_fake_browser "$fakebin"
   cat > "$fakebin/gh" <<'SH'
 #!/usr/bin/env bash
 exit 0

@@ -300,6 +300,9 @@ make_fake_toolchain() {
   # is absent or off bin/fm-lint.sh's pin, and this suite pins a system PATH that
   # does not carry the real pinned build.
   fm_fake_shellcheck "$fakebin"
+  # Same reasoning for the browser: bootstrap reports an absent Google Chrome, and
+  # whether the developer's machine has one is not this suite's subject.
+  fm_fake_browser "$fakebin"
   cat > "$fakebin/tmux" <<'SH'
 #!/usr/bin/env bash
 if [ -n "${FM_FAKE_TMUX_LOG:-}" ]; then

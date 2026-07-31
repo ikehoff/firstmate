@@ -32,6 +32,9 @@ export FM_BACKEND_CMUX_BUNDLE_BIN="$TMP_ROOT/no-bundled-cmux"
 # otherwise - the same hermeticity discipline as pinning PATH via BASE_PATH.
 unset TMUX TMUX_PANE HERDR_ENV HERDR_PANE_ID HERDR_SESSION HERDR_SOCKET_PATH \
   CMUX_WORKSPACE_ID CMUX_SURFACE_ID CMUX_SOCKET_PATH CMUX_TAB_ID CMUX_PANEL_ID 2>/dev/null || true
+# Same discipline for the browser check: a dev shell that points chrome-devtools-axi
+# at a browser it does not launch would silence the absent-browser report globally.
+unset CHROME_DEVTOOLS_AXI_BROWSER_URL CHROME_DEVTOOLS_AXI_AUTO_CONNECT 2>/dev/null || true
 
 # A fake toolchain where every required tool is present and gh is authenticated.
 # treehouse's `get --help` advertises --lease only when FM_FAKE_TREEHOUSE_LEASE_HELP=1.
@@ -76,6 +79,7 @@ exit 0
 SH
   chmod +x "$fakebin/no-mistakes"
   fm_fake_shellcheck "$fakebin"
+  fm_fake_browser "$fakebin"
   add_tasks_axi "$fakebin" "0.1.1"
   add_quota_axi "$fakebin"
   printf '%s\n' "$fakebin"
@@ -659,6 +663,74 @@ test_shellcheck_pin_has_one_owner() {
   pass "bootstrap: the ShellCheck requirement is read from bin/fm-lint.sh, not restated"
 }
 
+run_browser_case() {  # <case-dir> <fakebin> [VAR=VALUE...]
+  local case_dir=$1 fakebin=$2
+  shift 2
+  env "$@" PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" \
+    FM_ROOT_OVERRIDE="$case_dir/home" FM_FAKE_TREEHOUSE_LEASE_HELP=1 \
+    "$ROOT/bin/fm-bootstrap.sh"
+}
+
+test_absent_browser_is_reported() {
+  local case_dir fakebin out missing
+  missing="$TMP_ROOT/browser-nowhere/chrome"
+
+  # chrome-devtools-axi is only the driver: it resolves on PATH while the browser
+  # it drives is a separate system install. Without one, every visual or browser
+  # task fails, and it fails misleadingly - the tool prints a page: block with
+  # refs: 0 before the executable error, which reads like an empty page rather
+  # than broken tooling. FM_BROWSER_PATHS_OVERRIDE replaces the probe list AND
+  # suppresses the PATH-name probe, so this case is hermetic on a machine that
+  # does have Chrome installed.
+  case_dir="$TMP_ROOT/browser-absent"
+  fakebin=$(make_harness_case "$case_dir" claude '')
+  out=$(run_browser_case "$case_dir" "$fakebin" "FM_BROWSER_PATHS_OVERRIDE=$missing")
+  assert_contains "$out" "MISSING_MANUAL: google-chrome (instructions: https://www.google.com/chrome/" \
+    "bootstrap should report an absent browser, not just an absent chrome-devtools-axi"
+  # Installing a system browser needs elevated privileges and the captain's
+  # consent, so it must never arrive as something `fm-bootstrap.sh install` evals.
+  assert_not_contains "$out" "MISSING: google-chrome (install:" \
+    "a system browser must be reported as a manual install, never as an evalable command"
+  out=$(env PATH="$fakebin:$BASE_PATH" FM_HOME="$case_dir/home" \
+    FM_ROOT_OVERRIDE="$case_dir/home" "$ROOT/bin/fm-bootstrap.sh" install google-chrome 2>&1) && \
+    fail "fm-bootstrap.sh install google-chrome should refuse rather than install a browser"
+  assert_contains "$out" "requires manual installation" \
+    "the install path should name the browser as manual rather than run something"
+
+  # A browser at one of the probed locations: no noise.
+  case_dir="$TMP_ROOT/browser-present"
+  fakebin=$(make_harness_case "$case_dir" claude '')
+  : > "$case_dir/chrome"
+  out=$(run_browser_case "$case_dir" "$fakebin" "FM_BROWSER_PATHS_OVERRIDE=$missing:$case_dir/chrome")
+  [ -z "$out" ] || fail "a browser at a probed location should keep bootstrap silent, got: $out"
+
+  # The PATH-name probe is the second way a browser is found. This stays silent on
+  # a machine with a real Chrome too, so it is a smoke assertion rather than an
+  # isolation of that one mechanism.
+  case_dir="$TMP_ROOT/browser-on-path"
+  fakebin=$(make_harness_case "$case_dir" claude '')
+  out=$(run_browser_case "$case_dir" "$fakebin")
+  [ -z "$out" ] || fail "a google-chrome on PATH should keep bootstrap silent, got: $out"
+  pass "bootstrap: an absent browser is reported at session start as a manual install"
+}
+
+test_driver_reaching_a_remote_browser_is_silent() {
+  local case_dir fakebin out missing
+  missing="$TMP_ROOT/browser-nowhere/chrome"
+  # Two chrome-devtools-axi modes need no local executable at all: an explicit
+  # endpoint, and attaching to a running browser this machine may not own - a
+  # Windows Chrome reached from WSL, for instance. Reporting a missing browser in
+  # either mode would be crying wolf at every session start on a working home.
+  for mode in "CHROME_DEVTOOLS_AXI_BROWSER_URL=http://127.0.0.1:9222" \
+              "CHROME_DEVTOOLS_AXI_AUTO_CONNECT=1"; do
+    case_dir="$TMP_ROOT/browser-remote-${mode%%=*}"
+    fakebin=$(make_harness_case "$case_dir" claude '')
+    out=$(run_browser_case "$case_dir" "$fakebin" "FM_BROWSER_PATHS_OVERRIDE=$missing" "$mode")
+    [ -z "$out" ] || fail "$mode should keep the browser check silent, got: $out"
+  done
+  pass "bootstrap: a driver configured to reach a browser it does not launch is silent"
+}
+
 test_json_backends_require_jq_not_tmux() {
   local backend case_dir fakebin bash_env out
   # herdr/zellij/cmux parse their backend's JSON output, so jq is a genuine dep.
@@ -984,6 +1056,8 @@ test_unverified_harness_name_is_not_reported_as_missing
 test_harness_executable_path_is_the_shared_resolver
 test_absent_or_unpinned_shellcheck_is_reported
 test_shellcheck_pin_has_one_owner
+test_absent_browser_is_reported
+test_driver_reaching_a_remote_browser_is_silent
 test_json_backends_require_jq_not_tmux
 test_treehouse_lease_check_follows_resolved_backend
 test_fleet_sync_timeout_scales_with_origin_backed_project_count

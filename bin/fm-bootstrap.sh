@@ -64,6 +64,14 @@
 #          is why it is detected here. bin/fm-lint.sh owns the pin; this inventory
 #          reads it. The install command is the repo's checksum-verified
 #          bin/fm-install-shellcheck.sh, the same one CI uses.
+#          google-chrome is MISSING_MANUAL when no Google Chrome executable can
+#          be found, because chrome-devtools-axi is only the driver and the
+#          browser it drives is a separate system install: without it every
+#          visual or browser task fails, and fails misleadingly. Silent whenever
+#          CHROME_DEVTOOLS_AXI_BROWSER_URL or CHROME_DEVTOOLS_AXI_AUTO_CONNECT
+#          points the driver at a browser this machine need not own. Detection is
+#          a presence heuristic that errs toward silence;
+#          FM_BROWSER_PATHS_OVERRIDE replaces its absolute-path probe list.
 #          tasks-axi and quota-axi are required bootstrap tools (same class as
 #          lavish-axi). tasks-axi is also version and feature gated (0.1.1+
 #          with update --archive-body and mv [<id>...]); an installed but
@@ -523,6 +531,10 @@ install_cmd() {
 manual_install_url() {
   case "$1" in
     herdr) echo "https://herdr.dev" ;;
+    # A system browser needs elevated privileges and a platform-specific package
+    # source, so it is never something this script should eval on the captain's
+    # behalf; point at the vendor and let them consent to the install.
+    google-chrome) echo "https://www.google.com/chrome/ (or set CHROME_DEVTOOLS_AXI_BROWSER_URL to reach a browser this machine does not launch)" ;;
     *) return 1 ;;
   esac
 }
@@ -597,6 +609,68 @@ shellcheck_lint_check() {
   found=$(shellcheck --version 2>/dev/null | awk '/^version:/ {print $2; exit}')
   [ "$found" = "$required" ] && return 0
   echo "MISSING: shellcheck (install: $(install_cmd shellcheck))"
+}
+
+# The locations chrome-devtools-axi's own channel resolution probes for a Google
+# Chrome install. Per-user Windows installs sit under an account name this script
+# cannot know, so they are globbed. A non-empty colon-separated
+# FM_BROWSER_PATHS_OVERRIDE replaces this list AND suppresses the caller's PATH-name
+# probe, so it is the complete answer to "where is the browser": that is what lets
+# a test pin the probe instead of inheriting whatever the developer's machine has,
+# and it doubles as the escape hatch for a Chrome in a location nothing here knows.
+browser_candidate_paths() {
+  local path
+  if [ -n "${FM_BROWSER_PATHS_OVERRIDE:-}" ]; then
+    printf '%s\n' "$FM_BROWSER_PATHS_OVERRIDE" | tr ':' '\n'
+    return 0
+  fi
+  cat <<PATHS
+/opt/google/chrome/chrome
+/opt/google/chrome-beta/chrome
+/opt/google/chrome-unstable/chrome
+/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+$HOME/Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+/mnt/c/Program Files/Google/Chrome/Application/chrome.exe
+/mnt/c/Program Files (x86)/Google/Chrome/Application/chrome.exe
+PATHS
+  for path in /mnt/c/Users/*/AppData/Local/Google/Chrome/Application/chrome.exe; do
+    if [ -e "$path" ]; then printf '%s\n' "$path"; fi
+  done
+}
+
+# chrome-devtools-axi resolving on PATH does not mean browser work is possible:
+# the CLI is a driver, and the browser it drives is a separate system install
+# outside npm's reach. A home with the driver and no browser passes every other
+# check here and then fails on its first visual or browser task - and it fails
+# misleadingly, because the tool prints a page: block with refs: 0 BEFORE the
+# executable error, so skimmed output reads like a successful navigation to an
+# empty page rather than a hard tooling failure (audit fm-install-audit-a1
+# finding B2). Report it at session start instead. The browser is reported
+# independently of the driver rather than only after it, because it is a separate
+# requirement and a home missing both should learn both in one pass.
+#
+# Two driver modes need no local executable at all and are therefore silent: an
+# explicit CHROME_DEVTOOLS_AXI_BROWSER_URL endpoint, and
+# CHROME_DEVTOOLS_AXI_AUTO_CONNECT attaching to a running browser this machine
+# may not own - a Windows Chrome reached from WSL, for instance. Detection is
+# otherwise a presence heuristic: the driver's own probe locations, widened with
+# the PATH names a package install provides. It deliberately errs toward silence,
+# because a startup line that cries wolf on a working machine costs more than a
+# gap the first browser task reports anyway.
+browser_check() {
+  local name path
+  [ -n "${CHROME_DEVTOOLS_AXI_BROWSER_URL:-}" ] && return 0
+  [ "${CHROME_DEVTOOLS_AXI_AUTO_CONNECT:-0}" = 1 ] && return 0
+  if [ -z "${FM_BROWSER_PATHS_OVERRIDE:-}" ]; then
+    for name in google-chrome google-chrome-stable google-chrome-beta google-chrome-unstable google-chrome-canary; do
+      if command -v "$name" >/dev/null 2>&1; then return 0; fi
+    done
+  fi
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if [ -f "$path" ] || [ -x "$path" ]; then return 0; fi
+  done < <(browser_candidate_paths)
+  missing_tool_diagnostic google-chrome
 }
 
 x_mode_write_if_changed() {
@@ -956,6 +1030,7 @@ if command -v tasks-axi >/dev/null 2>&1 && ! fm_tasks_axi_compatible; then
   echo "MISSING: tasks-axi (install: $(install_cmd tasks-axi))"
 fi
 shellcheck_lint_check
+browser_check
 gh auth status >/dev/null 2>&1 || echo "NEEDS_GH_AUTH"
 # Worktree-tangle check: the firstmate primary checkout (FM_ROOT) must sit on its
 # default branch, not a feature branch (see fm-tangle-lib.sh). Scoped to the

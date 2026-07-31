@@ -134,6 +134,16 @@ SH
   chmod +x "$fakebin/shellcheck"
 }
 
+# fm_fake_browser <fakebin> installs a google-chrome stub. Bootstrap reports an
+# absent browser because chrome-devtools-axi is only the driver, and it finds one
+# by PATH name before falling back to absolute probe locations. Whether a real
+# Chrome exists is a property of the developer's machine, so any case expecting
+# bootstrap silence declares this stub; a case asserting the report instead sets
+# FM_BROWSER_PATHS_OVERRIDE, which suppresses the PATH-name probe entirely.
+fm_fake_browser() {
+  fm_fake_exit0 "$1" google-chrome
+}
+
 # --- deterministic git identity and fixtures --------------------------------
 
 # fm_git_identity [name] [email]: export a fixed author/committer identity so
