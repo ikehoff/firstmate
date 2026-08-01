@@ -57,10 +57,7 @@ Firstmate never writes that file.
 Disabling the version check costs the automatic notice that a new Herdr release exists; `herdr update` still works when invoked directly, and `bin/fm-install-herdr.sh` still installs the pinned build either way.
 Disabling the manifest check freezes agent detection at the manifest the installed build ships.
 
-Verified 2026-07-31 against Herdr 0.7.5.
-Two isolated servers were run under a throwaway `XDG_CONFIG_HOME`, with `HERDR_AGENT_DETECTION_MANIFEST_CATALOG_URL` pointed at a local capture listener so no manifest request left the machine.
-With both keys `true` the server logged `event="update.check.start"` at startup and the listener recorded `GET /agent-detection/index.toml`; with both keys `false` the same window produced no update-check log line and no request at all.
-A symbol and string sweep of the same binary independently found the two `herdr.dev` endpoints above and the Homebrew formula URL to be its only non-local hosts.
+Verified 2026-07-31 against Herdr 0.7.5; [`verification/runtime-backends.md`](verification/runtime-backends.md#outbound-network-behavior) owns the isolated-server capture and binary-sweep evidence.
 
 ## Watching and task containers
 

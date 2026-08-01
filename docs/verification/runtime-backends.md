@@ -325,6 +325,13 @@ ok - real herdr: the watcher fast-path enqueues a stale wake naming the task win
 
 Polling remained active and is covered as the fallback for capability, connect, subscribe, and repeated reader failure.
 
+### Outbound network behavior
+
+The two default-on background checks and their off-switches were verified on 2026-07-31 against Herdr 0.7.5; [`herdr-backend.md`](../herdr-backend.md#outbound-network-behavior) owns what they are and how an operator turns them off.
+Two isolated servers were run under a throwaway `XDG_CONFIG_HOME`, with `HERDR_AGENT_DETECTION_MANIFEST_CATALOG_URL` pointed at a local capture listener so no manifest request left the machine.
+With both `[update]` keys `true` the server logged `event="update.check.start"` at startup and the listener recorded `GET /agent-detection/index.toml`; with both keys `false` the same window produced no update-check log line and no request at all.
+A symbol and string sweep of the same binary independently found `https://herdr.dev/latest.json`, `https://herdr.dev/agent-detection/index.toml`, and the Homebrew formula URL to be its only non-local hosts.
+
 ### Away-mode transport
 
 The Pi/Herdr return and injection path was reverified on Herdr 0.7.3 and Pi 0.80.7:
