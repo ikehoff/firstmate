@@ -164,6 +164,41 @@ tests/fm-claude-stop-autoarm.test.sh
 tests/fm-turnend-guard.test.sh
 ```
 
+## Composer padding rendering
+
+This record supports the current guarantee that an idle agent composer classifies `empty`, which both submit confirmation in `bin/fm-send.sh` and away-mode escalation injection depend on.
+
+The pass ran on 2026-07-29 with Claude Code 2.1.220 and tmux 3.6, against three separate live idle panes.
+
+Capture command:
+
+```sh
+tmux capture-pane -p -t <pane> | grep -n '❯' | tail -1 | cat -A
+```
+
+Observed output, identical on all three panes:
+
+```
+64:M-bM-^]M-/M-BM- $
+```
+
+That is `E2 9D AF` (`❯` U+276F) followed by `C2 A0` (U+00A0 NO-BREAK SPACE), not an ASCII space.
+No locale's `[:space:]` class matches U+00A0, because it is non-breaking by definition, so the padding survived an ASCII-only trim and the idle composer classified `pending`.
+
+This padding is a harness RENDERING detail with no stability guarantee: a different Claude build, or any other harness, may pad, align, or pre-fill that row with a different character or none at all.
+The detector is therefore written against the whole padding class rather than pinned to this byte sequence.
+`FM_COMPOSER_WS` in `bin/fm-composer-lib.sh` is the single owner of that class and of what is deliberately excluded from it.
+Re-running the capture above after a harness upgrade is the check for a padding character outside the class; a new one shows up as an idle composer reading `pending`.
+
+The reusable regression spans every layer that reads the padding: `tests/fm-composer-lib.test.sh` pins the shared trim and the classifier verdict, `tests/fm-composer-ghost.test.sh` pins the tmux box-geometry blank test above the classifier, `tests/fm-backend-tmux-smoke.test.sh` asserts the same shapes against a real rendered tmux pane, and `tests/fm-backend-cmux.test.sh`, `tests/fm-backend-herdr.test.sh`, and `tests/fm-backend-orca.test.sh` pin the identical verdict on the other three adapters now that they route through the shared owner.
+Each of them builds its fixtures from the bytes above rather than typed approximations, and each pins the scope boundary alongside them: the same character inside typed text is content and stays `pending`.
+
+Trimming the whole class does not cost more than the ASCII-only trim it replaced, even though the structural scan trims every pane row.
+Measured on the same date over 30 iterations against one captured 68-row pane snapshot, the structural scan `fm_tmux_find_composer_box` runs in 21-23 ms with the class trim against 50-52 ms with the previous inline ASCII trim.
+The shared trim declares `local LC_ALL=C`, so its pattern matching walks bytes; the inline trims it replaced ran under the ambient UTF-8 locale, where multibyte pattern matching is markedly slower.
+It also takes an ASCII fast path and then skips the class loop for any row with no byte at or above 0x80 at either edge, which is most rows.
+Byte-wise matching is also the more exact choice: `[:space:]` becomes deterministically ASCII rather than locale-defined, and a padding sequence is compared as a whole literal byte string, which a well-formed UTF-8 stream can never match part-way into another character.
+
 ## Wedge-alarm channels
 
 The two real notification channels were bounded manually on 2026-07-10 on macOS 26.5.2 with Herdr 0.7.3.

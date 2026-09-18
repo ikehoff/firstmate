@@ -20,7 +20,9 @@
 # glyph (e.g. claude's older `| > ... |`). On a bare, unstructured row it is a
 # dead-shell prompt and is NEVER "empty"; it classifies as `unknown` (not a safe
 # injection target). The AGENT prompt glyphs `❯` (claude) and `›` (codex) are a
-# genuine empty agent composer either way, bordered or bare.
+# genuine empty agent composer either way, bordered or bare - including when the
+# harness pads that otherwise-empty row with non-ASCII whitespace, which
+# FM_COMPOSER_WS and fm_composer_trim_ws below define and remove.
 #
 # GHOST/PLACEHOLDER TEXT is the other half of this owner (task
 # afk-herdr-false-pending): a harness fills an otherwise-empty composer with
@@ -49,6 +51,130 @@
 # they have no ghost styling to strip and rely on the idle-placeholder match
 # below. Re-sourcing is a cheap idempotent redefinition, so this file needs no
 # include guard (matching bin/fm-tmux-lib.sh).
+
+# FM_COMPOSER_WS / fm_composer_trim_ws: the ONE fleet-wide definition of the
+# padding a TUI may draw around an otherwise-empty composer, and the trim that
+# removes it. Every adapter used to re-roll the same ASCII-only trim idiom
+# (`${s#"${s%%[![:space:]]*}"}`) before handing content to the classifier below;
+# that idiom resolves `[:space:]` against the ambient locale, and glibc's UTF-8
+# locales deliberately EXCLUDE U+00A0 from the space class (it is non-breaking).
+# Claude Code renders its empty composer as `❯` + U+00A0, so the no-break space
+# survived the trim, read as content after the prompt glyph, and the genuinely
+# empty composer classified `pending` (task fm-composer-nbsp). That silently
+# broke both consumers of emptiness: bin/fm-send.sh could never confirm a submit
+# and reported false delivery failures on messages that were in fact delivered,
+# and the away-mode injector (bin/fm-supervise-daemon.sh) never saw an injectable
+# pane and deferred every escalation until its max-defer alarm fired.
+#
+# WHAT IS IN THE SET, and why it is a class rather than the one byte observed.
+# The padding is a harness RENDERING detail that can change between harness
+# versions, so the detector is deliberately robust to the class instead of
+# pinned to one sequence:
+#   - ASCII space, tab, newline, carriage return, vertical tab, form feed. The
+#     previous behavior, restated explicitly so the trim no longer depends on
+#     the ambient locale's classification at all.
+#   - Every non-ASCII Unicode White_Space character: U+0085 NEL, U+00A0 (the
+#     observed one), U+1680 OGHAM SPACE MARK, U+2000-U+200A (the general
+#     punctuation spaces, including U+2007 FIGURE SPACE), U+2028 LINE
+#     SEPARATOR, U+2029 PARAGRAPH SEPARATOR, U+202F NARROW NO-BREAK SPACE,
+#     U+205F MEDIUM MATHEMATICAL SPACE, U+3000 IDEOGRAPHIC SPACE. These are the
+#     characters a TUI reaches for when it pads or aligns a row.
+#   - The invisible zero-width formatters a terminal writer emits as padding or
+#     a stray byte-order mark: U+200B ZERO WIDTH SPACE, U+2060 WORD JOINER,
+#     U+FEFF ZERO WIDTH NO-BREAK SPACE. They occupy no cell, so a row carrying
+#     only these is visually an empty composer.
+# DELIBERATELY EXCLUDED: U+200C ZERO WIDTH NON-JOINER and U+200D ZERO WIDTH
+# JOINER, which carry linguistic meaning inside real text (emoji sequences,
+# Indic scripts) and are not a padding idiom; and U+2800 BRAILLE PATTERN BLANK,
+# which is a printable character harnesses use to draw spinners, so trimming it
+# could read a busy row as an empty composer.
+#
+# SCOPE: this is a LEADING/TRAILING trim only, never a content-stripping pass.
+# A no-break space INSIDE typed text is real content and must keep the row
+# `pending`: `❯<U+00A0>hello` and `❯ hello<U+00A0>world` are text, not an empty
+# composer. Only padding at the edges of an otherwise-contentless row is removed.
+#
+# The set is written as exact UTF-8 BYTE sequences and removed by literal prefix
+# and suffix expansion, never through a `[...]` bracket expression or a `?`
+# wildcard. Both of those are locale-dependent and would risk splitting a
+# multibyte glyph under LC_ALL=C. Literal whole-sequence removal is exact in
+# either locale, because a complete UTF-8 sequence is never a prefix of, nor
+# contained inside, a different character's encoding.
+FM_COMPOSER_WS=(
+  ' ' $'\t' $'\n' $'\r' $'\v' $'\f'
+  $'\xc2\x85' $'\xc2\xa0' $'\xe1\x9a\x80'
+  $'\xe2\x80\x80' $'\xe2\x80\x81' $'\xe2\x80\x82' $'\xe2\x80\x83'
+  $'\xe2\x80\x84' $'\xe2\x80\x85' $'\xe2\x80\x86' $'\xe2\x80\x87'
+  $'\xe2\x80\x88' $'\xe2\x80\x89' $'\xe2\x80\x8a'
+  $'\xe2\x80\xa8' $'\xe2\x80\xa9' $'\xe2\x80\xaf'
+  $'\xe2\x81\x9f' $'\xe3\x80\x80'
+  $'\xe2\x80\x8b' $'\xe2\x81\xa0' $'\xef\xbb\xbf'
+)
+
+# fm_composer_trim_ws_var: strip every leading and trailing FM_COMPOSER_WS
+# sequence from <text> and leave the result in FM_COMPOSER_TRIMMED. This form
+# PRINTS NOTHING on purpose: the structural row scans in bin/fm-tmux-lib.sh and
+# bin/backends/herdr.sh trim once per pane row on every supervision poll, and a
+# command substitution there would add a fork per row. The outer loop repeats
+# until a full pass changes nothing, so mixed padding (a space then a no-break
+# space, say) is fully removed regardless of the order the sequences appear in.
+fm_composer_trim_ws_var() {  # <text> -> sets FM_COMPOSER_TRIMMED
+  # LC_ALL=C walks bytes. That is both faster than multibyte pattern matching in
+  # a poll-path loop and MORE exact here: [:space:] becomes deterministically
+  # ASCII instead of locale-defined, and the multibyte sequences below are
+  # matched as whole literal byte strings either way.
+  local LC_ALL=C s=$1 prev ws
+  # Cheap ASCII pass first, then an early-out: non-ASCII padding can only be at
+  # an edge if an edge BYTE is >= 0x80, which on an ordinary pane row it is not.
+  s=${s#"${s%%[![:space:]]*}"}
+  s=${s%"${s##*[![:space:]]}"}
+  case $s in
+    [$'\200'-$'\377']*|*[$'\200'-$'\377']) ;;
+    *) FM_COMPOSER_TRIMMED=$s; return 0 ;;
+  esac
+  while :; do
+    prev=$s
+    for ws in "${FM_COMPOSER_WS[@]}"; do
+      while [ "${s#"$ws"}" != "$s" ]; do s=${s#"$ws"}; done
+      while [ "${s%"$ws"}" != "$s" ]; do s=${s%"$ws"}; done
+    done
+    [ "$s" = "$prev" ] && break
+  done
+  FM_COMPOSER_TRIMMED=$s
+}
+
+# fm_composer_trim_ws: the printing form of the trim above, for the one-shot call
+# sites (and tests) where readability beats the fork a command substitution
+# costs. The call site already forks to capture the output, so the wrapper adds
+# nothing.
+fm_composer_trim_ws() {  # <text> -> <text> without leading/trailing composer padding
+  fm_composer_trim_ws_var "$1"
+  printf '%s' "$FM_COMPOSER_TRIMMED"
+}
+
+# fm_composer_pad_to_space_var: replace every FM_COMPOSER_WS sequence anywhere in
+# <text> with one ASCII space, leaving the result in FM_COMPOSER_PADDED. Used by
+# the width-signature checks that ask "is this box row's interior blank?" - those
+# compare column shapes rather than trimming, so padding has to be NORMALIZED to
+# a space there instead of removed. Zero-width members of the class collapse to a
+# space and U+3000 is double-width, so a box padded with those can still measure
+# one column off and read ambiguous; that defers, which is the safe direction.
+fm_composer_pad_to_space_var() {  # <text> -> sets FM_COMPOSER_PADDED
+  local LC_ALL=C s=$1 ws
+  # Same byte-wise early-out as the trim: no high byte anywhere means no
+  # non-ASCII padding to normalize.
+  case $s in
+    *[$'\200'-$'\377']*) ;;
+    *) FM_COMPOSER_PADDED=$s; return 0 ;;
+  esac
+  for ws in "${FM_COMPOSER_WS[@]}"; do
+    case "$ws" in ' ') continue ;; esac
+    s=${s//"$ws"/ }
+  done
+  # Read by bin/fm-tmux-lib.sh's geometry checks, not by this file.
+  # shellcheck disable=SC2034
+  FM_COMPOSER_PADDED=$s
+}
 
 # fm_composer_strip_ansi: drop every CSI escape sequence, leaving plain text.
 # Used for STRUCTURAL row/shape detection, where ghost text must be KEPT so the
@@ -165,8 +291,10 @@ fm_composer_strip_ghost() {
 #              bordered composer box, or a structurally-identified bare AGENT
 #              prompt row); 0 for a bare, unstructured row (e.g. tmux's raw
 #              cursor line that carried no box border).
-#   <content>  the candidate composer content, already border-stripped and
-#              whitespace-trimmed by the caller.
+#   <content>  the candidate composer content, already border-stripped by the
+#              caller. Leading and trailing padding is re-trimmed here through
+#              fm_composer_trim_ws, so the verdict cannot depend on how
+#              completely a caller trimmed first.
 #   [idle_re]  optional per-harness idle-placeholder regex (e.g. grok's
 #              "Type a message...") that reads as empty; matched both before and
 #              after a leading prompt glyph is stripped, so a pattern written
@@ -181,8 +309,14 @@ fm_composer_idle_matches() {
 }
 
 fm_composer_classify_content() {  # <bordered> <content> [idle_re] [idle_case] [plain_content]
-  local bordered=$1 content=$2 idle_re=${3:-} idle_case=${4:-sensitive} plain_content
-  plain_content=${5:-$content}
+  local bordered=$1 idle_re=${3:-} idle_case=${4:-sensitive} content plain_content
+  # Normalize both inputs here rather than trusting the caller's trim: this is
+  # the one place the empty-vs-pending verdict is decided, so it is the one
+  # place the padding class has to be understood (see FM_COMPOSER_WS).
+  fm_composer_trim_ws_var "$2"
+  content=$FM_COMPOSER_TRIMMED
+  fm_composer_trim_ws_var "${5:-$2}"
+  plain_content=$FM_COMPOSER_TRIMMED
   if [ "$bordered" != 1 ] && [ -z "$content" ] && [ -n "$plain_content" ]; then
     case "$plain_content" in
       '❯'|'›') printf 'empty'; return 0 ;;
@@ -206,13 +340,21 @@ fm_composer_classify_content() {  # <bordered> <content> [idle_re] [idle_case] [
   if fm_composer_idle_matches "$content" "$idle_re" "$idle_case"; then
     printf 'empty'; return 0
   fi
-  # Strip a leading prompt glyph, then re-judge the remainder.
+  # Strip a leading prompt glyph, then re-judge the remainder. The glyph is
+  # removed as a literal, not through a `?` wildcard, so the removal is exact
+  # whether or not the ambient locale reads `❯` as one character; whatever
+  # separator the harness draws after it - an ASCII space, a no-break space, or
+  # nothing - is then removed by the shared trim.
   case "$content" in
-    '❯ '*|'› '*|'> '*|'$ '*|'% '*|'# '*) content=${content#??} ;;
-    '❯'*|'›'*|'>'*|'$'*|'%'*|'#'*) content=${content#?} ;;
+    '❯'*) content=${content#'❯'} ;;
+    '›'*) content=${content#'›'} ;;
+    '>'*) content=${content#'>'} ;;
+    '$'*) content=${content#'$'} ;;
+    '%'*) content=${content#'%'} ;;
+    '#'*) content=${content#'#'} ;;
   esac
-  content="${content#"${content%%[![:space:]]*}"}"
-  content="${content%"${content##*[![:space:]]}"}"
+  fm_composer_trim_ws_var "$content"
+  content=$FM_COMPOSER_TRIMMED
   [ -n "$content" ] || { printf 'empty'; return 0; }
   # Known idle placeholder (matched again after the leading glyph was stripped,
   # e.g. "❯ Type a message...").

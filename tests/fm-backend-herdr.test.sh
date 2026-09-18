@@ -1907,6 +1907,31 @@ test_composer_state_real_text_is_pending() {
   pass "fm_backend_herdr_composer_state: real composer text reads pending"
 }
 
+# Task fm-composer-nbsp, adapter half: this adapter's own inline ASCII trim was
+# retired in favor of the shared owner's padding class (FM_COMPOSER_WS in
+# bin/fm-composer-lib.sh), so the claude-rendered empty composer - `❯` followed
+# by U+00A0 NO-BREAK SPACE, written here as the raw bytes C2 A0 rather than a
+# typed character - must reach the same `empty` verdict it reaches on tmux. The
+# scope boundary is pinned alongside it: a no-break space INSIDE typed text is
+# content, so that row stays `pending`.
+test_composer_state_nbsp_padding_is_empty() {
+  local dir log resp fb out
+  dir="$TMP_ROOT/composer-nbsp"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  printf '  ╭────────────────────────╮\n  │ \xe2\x9d\xaf\xc2\xa0                     │\n  ╰──────── Composer ─────╯\n' > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state default:w1:p2' "$ROOT" )
+  [ "$out" = empty ] || fail "a U+00A0-padded empty composer should read empty on herdr, got '$out'"
+
+  dir="$TMP_ROOT/composer-nbsp-text"; mkdir -p "$dir/responses"; log="$dir/log"; resp="$dir/responses"; : > "$log"
+  printf '  ╭────────────────────────╮\n  │ \xe2\x9d\xaf hello\xc2\xa0captain        │\n  ╰──────── Composer ─────╯\n' > "$resp/1.out"
+  fb=$(make_herdr_fakebin "$dir")
+  out=$( PATH="$fb:$PATH" FM_HERDR_LOG="$log" FM_HERDR_RESPONSES="$resp" \
+    bash -c '. "$0/bin/backends/herdr.sh"; fm_backend_herdr_composer_state default:w1:p2' "$ROOT" )
+  [ "$out" = pending ] || fail "typed text containing U+00A0 must stay pending on herdr, got '$out'"
+  pass "fm_backend_herdr_composer_state: U+00A0 padding reads empty, while U+00A0 inside typed text stays pending"
+}
+
 # Live-verified incident (2026-07-03, real grok 0.2.82 on herdr, isolated
 # session): typing "/compact" opens the completion popup; the FIRST Enter
 # closes the popup and EXPANDS the composer into an argument-hint placeholder
@@ -3170,6 +3195,7 @@ test_busy_state_unknown_on_no_agent
 test_composer_state_bare_prompt_is_empty
 test_composer_state_ghost_placeholder_is_empty
 test_composer_state_real_text_is_pending
+test_composer_state_nbsp_padding_is_empty
 test_composer_state_popup_placeholder_fill_is_pending
 test_composer_state_unknown_on_capture_failure
 test_composer_state_unknown_when_no_composer_row_found

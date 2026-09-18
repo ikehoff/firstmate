@@ -2061,9 +2061,11 @@ FM_BACKEND_HERDR_BARE_PROMPT_RE=${FM_BACKEND_HERDR_BARE_PROMPT_RE:-'^(❯|›)'}
 FM_BACKEND_HERDR_PI_COMPOSER_MAX_LINES=${FM_BACKEND_HERDR_PI_COMPOSER_MAX_LINES:-8}
 
 fm_backend_herdr_pi_separator_row() {  # <plain-row>
-  local row=$1
-  row="${row#"${row%%[![:space:]]*}"}"
-  row="${row%"${row##*[![:space:]]}"}"
+  local row
+  # Shared padding trim (bin/fm-composer-lib.sh), fork-free: a separator padded
+  # with non-ASCII whitespace is still a separator.
+  fm_composer_trim_ws_var "$1"
+  row=$FM_COMPOSER_TRIMMED
   [ "${#row}" -ge 8 ] || return 1
   [ -z "${row//─/}" ]
 }
@@ -2135,9 +2137,11 @@ fm_backend_herdr_composer_state() {  # <target> -> empty|pending|unknown
   # kept for ANSI-aware content extraction after the scan.
   while IFS= read -r line; do
     row=$((row + 1))
-    trimmed=$(fm_backend_herdr_strip_ansi "$line")
-    trimmed="${trimmed#"${trimmed%%[![:space:]]*}"}"
-    trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+    # Shared padding trim (bin/fm-composer-lib.sh), fork-free: the bare-prompt
+    # regex below is anchored at ^, so padding left in front of the glyph would
+    # hide a real composer row from this scan.
+    fm_composer_trim_ws_var "$(fm_backend_herdr_strip_ansi "$line")"
+    trimmed=$FM_COMPOSER_TRIMMED
     [ -n "$trimmed" ] || continue
     case "$trimmed" in
       '│'*'│'|'┃'*'┃'|'|'*'|')
@@ -2200,16 +2204,17 @@ EOF
   # afk-herdr-false-pending wedge) and, in a dark theme, drops the composer's own
   # dark box border too, which is why the bordered flag was read from the plain
   # shape above, not from this ghost-stripped content.
+  # The content is NOT trimmed here: the border removals below are global
+  # substitutions and so are order-independent, and fm_composer_classify_content
+  # (bin/fm-composer-lib.sh) trims its own input through the shared padding class,
+  # so harness padding that no [:space:] class matches (claude's U+00A0
+  # empty-composer pad) cannot survive as false content either way.
   stripped=$(printf '%s\n' "$raw_match" | fm_composer_strip_ghost)
-  stripped="${stripped#"${stripped%%[![:space:]]*}"}"
-  stripped="${stripped%"${stripped##*[![:space:]]}"}"
   if [ "$shape" = bordered ]; then
     bordered=1
     stripped=${stripped//│/}
     stripped=${stripped//┃/}
     stripped=${stripped//|/}
-    stripped="${stripped#"${stripped%%[![:space:]]*}"}"
-    stripped="${stripped%"${stripped##*[![:space:]]}"}"
   elif [ "$shape" = separated ]; then
     # The native Pi identity plus the complete separator pair is the genuine
     # composer container, equivalent to a bordered box for shared content
